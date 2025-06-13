@@ -1,14 +1,18 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { JSX } from 'react/jsx-runtime';
 
-export default function HomeScreen() {
+export default function HomeScreen(): JSX.Element {
+  const router = useRouter();
+
   return (
     <View style={styles.container}>
       {/* Sign Up Buttons */}
-      <TouchableOpacity style={styles.button}>
+      <TouchableOpacity style={styles.button} onPress={() => router.push('/CourierSignUp')}>
         <Text style={styles.buttonText}>Sign Up as Courier</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.button}>
+      <TouchableOpacity style={styles.button} onPress={() => router.push('/SenderSignUp')}>
         <Text style={styles.buttonText}>Sign Up as Sender</Text>
       </TouchableOpacity>
 
@@ -16,10 +20,10 @@ export default function HomeScreen() {
       <Text style={styles.orText}>or</Text>
 
       {/* Login Buttons */}
-      <TouchableOpacity style={styles.secondaryButton}>
+      <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/CourierLogin')}>
         <Text style={styles.secondaryButtonText}>Login as Courier</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.secondaryButton}>
+      <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/SenderLogin')}>
         <Text style={styles.secondaryButtonText}>Login as Sender</Text>
       </TouchableOpacity>
     </View>
