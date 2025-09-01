@@ -1,18 +1,15 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface, Keypair
+from .routers import auctions
+from .services.auction_scheduler import start_scheduler
 
 load_dotenv()
 SUB_WS = os.getenv("SUBSTRATE_WS", "ws://127.0.0.1:9944")
-
-app = FastAPI(title="PoBA API (FastAPI)")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-)
 
 # Development account only (Alice)
 ALICE = Keypair.create_from_uri("//Alice")
@@ -21,10 +18,8 @@ ALICE = Keypair.create_from_uri("//Alice")
 def get_substrate():
     try:
         sub = SubstrateInterface(url=SUB_WS, auto_reconnect=True)
-        # Load runtime metadata so that compose_call works
-        sub.init_runtime()
-        # Simple health check (also warms up the WS connection)
-        _ = sub.get_chain_head()
+        sub.init_runtime()  # Load runtime metadata so that compose_call works
+        _ = sub.get_chain_head()  # Simple health check
         return sub
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"cannot connect to node: {e}")
@@ -36,6 +31,26 @@ class CreateShipmentIn(BaseModel):
 
 class PlaceBidIn(BaseModel):
     price: int
+
+# ---------- Lifespan handler ----------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    start_scheduler()
+    yield
+    # Shutdown
+    # (אם תרצי להוסיף קוד לסגירה נקייה של scheduler או חיבורים — זה המקום)
+
+app = FastAPI(title="PoBA API (FastAPI)", lifespan=lifespan)
+
+# ---------- Middleware ----------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
+
+# ---------- Routers ----------
+app.include_router(auctions.router)
 
 # ---------- Debug endpoints ----------
 @app.get("/debug/health")
