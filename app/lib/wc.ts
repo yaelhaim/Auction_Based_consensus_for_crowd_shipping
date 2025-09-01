@@ -1,5 +1,5 @@
 import SignClient from '@walletconnect/sign-client';
-import { Linking } from 'react-native';
+import * as Linking from 'expo-linking';
 import Constants from 'expo-constants';
 //בדיקה  
 console.log("WC ProjectId →", process.env.EXPO_PUBLIC_WC_PROJECT_ID);
@@ -60,7 +60,13 @@ export async function connect(): Promise<WCSessionInfo> {
 
   // אם קיבלנו URI — פותחים את הארנק (SubWallet יודע לקלוט wc:)
   if (uri) {
-    await Linking.openURL(uri); // בד"כ ה-URI כבר מתחיל ב-wc:
+    const deeplink = `subwallet://wc?uri=${encodeURIComponent(uri)}`;
+    try {
+      await Linking.openURL(deeplink);
+    } catch {
+      // fallback: תנסי לפתוח ישירות את ה-wc uri אם אין אפליקציה
+      await Linking.openURL(uri);
+    }
   }
 
   // המתנה לאישור מהארנק

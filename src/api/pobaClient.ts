@@ -1,4 +1,5 @@
-const BASE = process.env.EXPO_PUBLIC_POBA_API || "http://localhost:3001";
+const BASE = process.env.EXPO_PUBLIC_POBA_API || "http://localhost:8000";
+
 
 // הערות חשובות:
 // - iOS Simulator: localhost עובד כרגיל.
