@@ -1,126 +1,167 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image, Modal, Pressable, Linking, I18nManager } from 'react-native';
+import {
+  SafeAreaView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Image,
+  Modal,
+  Pressable,
+  Linking,
+  I18nManager,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 
-// ודאי שה־RTL פעיל אם צריך
 I18nManager.allowRTL(true);
+
+const COLORS = {
+  bg: '#ffffff',
+  primary: '#475530',     
+  primarySoft: '#9bac70', 
+  text: '#060606',
+  textDim: '#8a8a8a',
+  border: '#e5e7eb',
+};
 
 export default function HomeScreen() {
   const router = useRouter();
   const [helpVisible, setHelpVisible] = useState(false);
 
   return (
-    <View style={styles.container}>
-      {/* Logo */}
-      <Image 
-        source={require('../assets/images/icon.png')} 
-        style={styles.logo}
-        resizeMode="contain"
-      />
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.container}>
 
-      {/* Short description */}
-      <Text style={styles.title}>ברוכ/ה הבאה ל-Bid Drop</Text>
-      <Text style={styles.subtitle}>
-        בשלב זה נדרש זיהוי והתחברות דרך ארנק דיגיטלי.
-      </Text>
+        {/* Logo */}
+        <Image
+          source={require('../assets/images/icon.png')}
+          style={styles.logo}
+          resizeMode="contain"
+          accessibilityIgnoresInvertColors
+        />
 
-      {/* register*/}
-<TouchableOpacity
-  style={[styles.buttonPrimary, { marginBottom: 12 }]} // רווח אנכי
-  onPress={() => router.push('/register')}
-  accessibilityLabel="Register"
->
-  <Text style={styles.buttonPrimaryText}>הרשמה</Text>
-</TouchableOpacity>
+        {/* Title & subtitle */}
+        <Text style={styles.title}>ברוכ/ה הבאה ל-BidDrop</Text>
+        <Text style={styles.subtitle}>
+          כדי להמשיך נדרש זיהוי מאובטח באמצעות ארנק SubWallet.
+        </Text>
 
-{/* conect wollt*/}
-<TouchableOpacity
-  style={styles.buttonPrimary}
-  onPress={() => router.push('/connect-wallet')}
-  accessibilityLabel="Connect Digital Wallet"
->
-  <Text style={styles.buttonPrimaryText}>התחברות לארנק דיגיטלי</Text>
-</TouchableOpacity>
+        {/* Primary: Register / Connect Wallet */}
+        <TouchableOpacity
+          style={[styles.buttonPrimary, { marginTop: 8 }]}
+          onPress={() => router.push('/wallet-login')}
+          accessibilityRole="button"
+          accessibilityLabel="התחברות או הרשמה עם SubWallet"
+          testID="btn-connect-subwallet"
+        >
+          <Text style={styles.buttonPrimaryText}>התחברות / הרשמה עם SubWallet</Text>
+        </TouchableOpacity>
 
+        {/* Sign in link */}
+        <Pressable
+          onPress={() => router.push('/wallet-login')}
+          accessibilityRole="link"
+          style={{ marginTop: 12 }}
+        >
+          <Text style={styles.signInText}>
+            יש לך כבר חשבון? <Text style={styles.signInLink}>התחברי</Text>
+          </Text>
+        </Pressable>
 
+        {/* Help: no wallet installed */}
+        <Pressable onPress={() => setHelpVisible(true)} style={{ marginTop: 16 }}>
+          <Text style={styles.helpText}>אין לך ארנק? צריך/ה עזרה בהתחברות</Text>
+        </Pressable>
 
-      {/* Sign in link */}
-      <Pressable onPress={() => router.push('/signin')} accessibilityRole="link" style={{ marginTop: 12 }}>
-        <Text style={styles.signInText}>כבר יש לך חשבון? <Text style={styles.signInLink}>Sign in</Text></Text>
-      </Pressable>
+        {/* Modal: wallet help (SubWallet only) */}
+        <Modal
+          visible={helpVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setHelpVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>איך מתחברים עם SubWallet?</Text>
 
-      {/* Help: no wallet installed */}
-      <Pressable onPress={() => setHelpVisible(true)} style={{ marginTop: 16 }}>
-        <Text style={styles.helpText}>אין לך ארנק? צריך עזרה בהתחברות</Text>
-      </Pressable>
+              <Text style={styles.modalBody}>
+                 הורד את אפליקציית SubWallet. במסך הבא תוצג אפשרות לחתימה באמצעות QR/Deep Link.
+              </Text>
 
-      {/* Modal: wallet help */}
-      <Modal visible={helpVisible} transparent animationType="fade" onRequestClose={() => setHelpVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>איך מתחברים עם ארנק?</Text>
-            <Text style={styles.modalBody}>
-              ניתן להתחבר בעזרת אפליקציית ארנק (Wallet) או באמצעות WalletConnect.
-              התקיני אחת מהאופציות, ואז חזרי ללחיצה על “הרשמה / התחברות לארנק”.
-            </Text>
+              <View style={styles.linkList}>
+                {/* Desktop extension */}
+                <Pressable
+                  onPress={() => Linking.openURL('https://www.subwallet.app')}
+                  accessibilityRole="link"
+                >
+                  <Text style={styles.modalLink}>
+                    הורדת SubWallet 
+                  </Text>
+                </Pressable>
+                {/* Optional: דף הסבר */}
+                <Pressable
+                  onPress={() => Linking.openURL('https://support.subwallet.app')}
+                  accessibilityRole="link"
+                >
+                  <Text style={styles.modalLink}>
+                    מדריכים ותמיכה – SubWallet
+                  </Text>
+                </Pressable>
 
-            <View style={styles.linkList}>
-              <Pressable onPress={() => Linking.openURL('https://metamask.io/')}>
-                <Text style={styles.modalLink}>MetaMask (EVM)</Text>
-              </Pressable>
-              <Pressable onPress={() => Linking.openURL('https://www.walletconnect.com/')}>
-                <Text style={styles.modalLink}>WalletConnect</Text>
-              </Pressable>
-              <Pressable onPress={() => Linking.openURL('https://www.subwallet.app/')}>
-                <Text style={styles.modalLink}>SubWallet (Substrate/Polkadot)</Text>
-              </Pressable>
+                {/* הצגת הערה לגבי פלטפורמה */}
+                <Text style={styles.noteText}>
+                  {Platform.OS === 'web'
+                    ? 'טיפ: אם התוסף לא מזוהה, רענני את הדף לאחר ההתקנה.'
+                    : 'טיפ: במובייל, המשך יתבצע באמצעות סריקת QR או פתיחה ישירה של SubWallet.'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={() => setHelpVisible(false)}
+              >
+                <Text style={styles.buttonSecondaryText}>סגירה</Text>
+              </TouchableOpacity>
             </View>
-
-            <TouchableOpacity style={styles.buttonSecondary} onPress={() => setHelpVisible(false)}>
-              <Text style={styles.buttonSecondaryText}>סגירה</Text>
-            </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </View>
+    </SafeAreaView>
   );
 }
 
-const COLORS = {
-  bg: '#ffffff',
-  primary: '#475530',   // ירוק כהה
-  primarySoft: '#9bac70', // ירוק בהיר
-  text: '#222',
-  textDim: '#6b7280',
-  border: '#e5e7eb'
-};
-
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20
+    paddingHorizontal: 20,
   },
   logo: {
     width: 140,
     height: 140,
-    marginBottom: 12
+    marginBottom: 10,
   },
   title: {
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: '800',
     color: COLORS.text,
-    marginTop: 4
+    marginTop: 4,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
     color: COLORS.textDim,
     textAlign: 'center',
     marginTop: 8,
-    marginBottom: 20,
-    lineHeight: 20
+    marginBottom: 18,
+    lineHeight: 20,
   },
   buttonPrimary: {
     backgroundColor: COLORS.primarySoft,
@@ -133,32 +174,32 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
-    elevation: 2
+    elevation: 2,
   },
   buttonPrimaryText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '700'
+    fontWeight: '700',
   },
   signInText: {
     color: COLORS.textDim,
-    fontSize: 14
+    fontSize: 14,
   },
   signInLink: {
     color: COLORS.primary,
-    fontWeight: '700'
+    fontWeight: '700',
   },
   helpText: {
     color: COLORS.primary,
     fontSize: 13,
-    textDecorationLine: 'underline'
+    textDecorationLine: 'underline',
   },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 18
+    padding: 18,
   },
   modalCard: {
     width: '100%',
@@ -166,28 +207,37 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border
+    borderColor: COLORS.border,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: COLORS.text,
-    marginBottom: 8
+    marginBottom: 8,
+    textAlign: 'center',
   },
   modalBody: {
     fontSize: 14,
     color: COLORS.textDim,
-    lineHeight: 20
+    lineHeight: 20,
+    textAlign: 'center',
   },
   linkList: {
     marginTop: 12,
-    gap: 8
+    gap: 8,
   },
   modalLink: {
     fontSize: 15,
     color: COLORS.primary,
     textDecorationLine: 'underline',
-    marginVertical: 4
+    marginVertical: 4,
+    textAlign: 'center',
+  },
+  noteText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: COLORS.textDim,
+    textAlign: 'center',
   },
   buttonSecondary: {
     marginTop: 16,
@@ -196,11 +246,11 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
     borderRadius: 12,
     paddingVertical: 12,
-    alignItems: 'center'
+    alignItems: 'center',
   },
   buttonSecondaryText: {
     color: COLORS.primary,
     fontSize: 15,
-    fontWeight: '700'
-  }
+    fontWeight: '700',
+  },
 });
