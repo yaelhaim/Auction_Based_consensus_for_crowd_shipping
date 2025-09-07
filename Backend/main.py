@@ -4,10 +4,13 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from Database.db import get_db   # updated import
-from routes_users import router as users_router
+from .Database.db import get_db   # updated import
+from .routes_users import router as users_router
+from .routes_auth import router as auth_router
+
 
 app = FastAPI()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +26,10 @@ def db_health(db: Session = Depends(get_db)):
     row = db.execute(text("SELECT NOW() AS now")).mappings().first()
     return {"db_time": str(row["now"])}
 
+
+app.include_router(auth_router)
 app.include_router(users_router)
+
 
 @app.get("/debug/dbinfo")
 def db_info(db: Session = Depends(get_db)):

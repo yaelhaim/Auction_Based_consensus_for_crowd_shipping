@@ -4,6 +4,7 @@
 node_modules/
 
 Backend/.env
+/ios 
 
 # Expo
 .expo/

@@ -1,47 +1,74 @@
 {
-    "expo": {
-        "name": "BidDrop",
-        "slug": "BidDrop",
-        "version": "1.0.0",
-        "orientation": "portrait",
-        "icon": "./assets/images/icon.png",
-        "scheme": "Biddrop",
-        "userInterfaceStyle": "automatic",
-        "newArchEnabled": true,
-        "ios": {
-            "supportsTablet": true
-        },
-        "android": {
-            "adaptiveIcon": {
-                "foregroundImage": "./assets/images/icon.png",
-                "backgroundColor": "#ffffff"
-            },
-            "edgeToEdgeEnabled": true
-        },
-        "web": {
-            "bundler": "metro",
-            "output": "static",
-            "favicon": "./assets/images/icon.png"
-        },
-
-        "splash": {
-            "resizeMode": "cover",
-            "backgroundColor": "#ffffff"
-        },
-
-        "plugins": [
-            "expo-router", [
-                "expo-splash-screen",
-                {
-                    "image": "./assets/images/SplashScreen.png",
-                    "resizeMode": "cover",
-                    "backgroundColor": "#ffffff"
-                }
-            ]
-        ],
-        "experiments": {
-            "typedRoutes": true
+  "expo": {
+    "name": "BidDrop",
+    "slug": "BidDrop",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "biddrop",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "extra": {
+      "wcProjectId": "${EXPO_PUBLIC_WC_PROJECT_ID}",
+      "router": {},
+      "eas": {
+        "projectId": "ba9c100f-a0df-467a-ab24-8ed14b5a8ae6"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.biddrop.app",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "subwallet",
+          "wc",
+          "https"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.biddrop.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "scheme": "biddrop"
+            }
+          ]
         }
-
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/icon.png"
+    },
+    "splash": {
+      "resizeMode": "cover",
+      "backgroundColor": "#ffffff"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/SplashScreen.png",
+          "resizeMode": "cover",
+          "backgroundColor": "#ffffff"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
     }
+  }
 }
