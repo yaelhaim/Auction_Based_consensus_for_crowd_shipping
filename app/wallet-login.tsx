@@ -1,9 +1,9 @@
-// app/wallet-login.tsx
 // UI for wallet login flow with:
-//   Connect → (QR if simulator / no app) → Nonce → Sign → Verify
-// IMPORTANT: We sign EXACTLY the server's message_to_sign (no manual formatting).
+//   Connect → (auto open wallet or store) → (QR fallback) → Nonce → Sign → Verify
+// Auto-resume: when returning from wallet (deep link or app focus), we finalize approval
+// WITHOUT locking the UI while waiting for wallet approval.
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -12,16 +12,21 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  AppState,
+  AppStateStatus,
 } from "react-native";
+import * as Linking from "expo-linking";
 import QRCode from "react-native-qrcode-svg";
 import { useRouter } from "expo-router";
+
 import {
   connect as wcConnect,
   signMessage as wcSignMessage,
   WCSessionInfo,
   WCConnectResult,
-} from "./lib/wc";
-import { getNonce, verifySignature } from "./lib/api";
+  openSubWalletOrStore,
+} from "../lib/wc";
+import { getNonce, verifySignature } from "../lib/api";
 
 const COLORS = {
   bg: "#ffffff",
@@ -36,75 +41,124 @@ const COLORS = {
 export default function WalletLoginAuto() {
   const router = useRouter();
 
-  // --- State management ---
-  const [session, setSession] = useState<WCSessionInfo | null>(null); // WalletConnect session (topic + address)
-  const [nonce, setNonce] = useState(""); // nonce from backend (for display only)
-  const [messageToSign, setMessageToSign] = useState(""); // EXACT server message_to_sign
+  // WalletConnect session (topic + address)
+  const [session, setSession] = useState<WCSessionInfo | null>(null);
+  // Server-provided fields
+  const [nonce, setNonce] = useState("");
+  const [messageToSign, setMessageToSign] = useState("");
+  // UI state
   const [busy, setBusy] = useState<
     "idle" | "connecting" | "nonce" | "signing" | "verifying"
   >("idle");
   const [err, setErr] = useState<string | null>(null);
 
-  // When no wallet app is available (simulator / device without app), show QR:
-  const [wcUri, setWcUri] = useState<string | null>(null); // WalletConnect URI for QR
+  // Pairing URI + deferred approval
+  const [wcUri, setWcUri] = useState<string | null>(null);
   const [waitForApproval, setWaitForApproval] = useState<
     null | (() => Promise<WCSessionInfo>)
-  >(null); // Deferred waiter after scanning QR
+  >(null);
 
-  // Helper: request nonce + message_to_sign from server and set state
+  // Keep a single approval promise to avoid multiple awaits
+  const approvalPromiseRef = useRef<Promise<WCSessionInfo> | null>(null);
+  const finalizingRef = useRef(false); // prevent concurrent finalize runs
+
+  // Request nonce + message_to_sign from backend
   const requestNonce = useCallback(async (address: string) => {
     setBusy("nonce");
     const { nonce, message_to_sign } = await getNonce(address);
     setNonce(nonce);
-    setMessageToSign(message_to_sign); // <-- critical: use server string as-is
+    setMessageToSign(message_to_sign); // use server string as-is
     setBusy("idle");
     Alert.alert("מחוברת", "Nonce נוצר. אפשר לחתום.");
   }, []);
 
-  // 1) Connect to wallet (either approved session or QR flow)
+  // Central finalize function (don’t lock UI)
+  const finalizeAfterApproval = useCallback(async () => {
+    if (finalizingRef.current) return;
+    const p = approvalPromiseRef.current;
+    if (!p) return;
+
+    finalizingRef.current = true;
+    try {
+      const s = await p; // resolve once
+      approvalPromiseRef.current = null;
+      setSession(s);
+      setWcUri(null);
+      setWaitForApproval(null);
+      await requestNonce(s.address);
+    } catch {
+      // If not approved yet, we just ignore and will try again on next trigger
+    } finally {
+      finalizingRef.current = false;
+    }
+  }, [requestNonce]);
+
+  // ---- Auto-resume on app focus (user returns from wallet manually) ----
+  useEffect(() => {
+    const onAppStateChange = (state: AppStateStatus) => {
+      if (state === "active") finalizeAfterApproval();
+    };
+    const sub = AppState.addEventListener("change", onAppStateChange);
+    return () => sub.remove();
+  }, [finalizeAfterApproval]);
+
+  // ---- Handle deep-link callback (biddrop://wc-callback) & initial URL ----
+  useEffect(() => {
+    const onUrl = ({ url }: { url: string }) => {
+      if (__DEV__) console.log("Deep link received:", url);
+      finalizeAfterApproval();
+    };
+    const sub = Linking.addEventListener("url", onUrl);
+
+    // In case app launched via deep link
+    (async () => {
+      const firstUrl = await Linking.getInitialURL();
+      if (firstUrl) onUrl({ url: firstUrl });
+    })();
+
+    return () => sub.remove();
+  }, [finalizeAfterApproval]);
+
+  // 1) Connect to wallet (auto-open SubWallet; QR fallback stays visible)
   const handleConnect = useCallback(async () => {
     setErr(null);
     setWcUri(null);
     setWaitForApproval(null);
+    approvalPromiseRef.current = null;
 
     try {
       setBusy("connecting");
       const res: WCConnectResult = await wcConnect();
+      setBusy("idle"); // release UI immediately
 
       if (res.type === "approved") {
-        // Real device with wallet installed
         setSession(res.session);
         await requestNonce(res.session.address);
       } else {
-        // needsWallet: show QR and wait for approval
+        // We have a pairing URI and a deferred approval promise
         setWcUri(res.uri);
         setWaitForApproval(() => res.waitForApproval);
-        setBusy("idle");
-        Alert.alert("סריקה נדרשת", "פתחי את SubWallet בפלאפון וסרקי את ה-QR.");
+        // Keep a single promise instance
+        approvalPromiseRef.current = res.waitForApproval();
+
+        // Try to open SubWallet (best-effort). QR remains as fallback.
+        openSubWalletOrStore(res.uri).catch(() => {});
+        // Also try finalize immediately (in case approval already happened)
+        finalizeAfterApproval();
       }
     } catch (e: any) {
       setBusy("idle");
       setErr(e?.message || "החיבור נכשל");
     }
-  }, [requestNonce]);
+  }, [requestNonce, finalizeAfterApproval]);
 
-  // 1b) After QR scan, wait for approval to resolve the session
+  // 1b) After user scanned/approved in wallet (manual CTA)
   const handleApproveAfterQr = useCallback(async () => {
-    if (!waitForApproval) return;
-    setBusy("connecting");
-    try {
-      const s = await waitForApproval();
-      setSession(s);
-      setWcUri(null);
-      setWaitForApproval(null);
-      await requestNonce(s.address);
-    } catch (e: any) {
-      setBusy("idle");
-      setErr(e?.message || "האישור נכשל");
-    }
-  }, [waitForApproval, requestNonce]);
+    // Just try to finalize using the stored promise
+    await finalizeAfterApproval();
+  }, [finalizeAfterApproval]);
 
-  // 2) Manual nonce request (optional explicit control)
+  // 2) Manual nonce refresh
   const handleNonce = useCallback(async () => {
     if (!session?.address) {
       Alert.alert("שגיאה", "חסרה כתובת. התחברי לארנק קודם.");
@@ -128,18 +182,15 @@ export default function WalletLoginAuto() {
     setErr(null);
     try {
       setBusy("signing");
-
-      // IMPORTANT: sign EXACTLY the server message (no changes)
       const signature = await wcSignMessage(
         session.topic,
         session.address,
         messageToSign
       );
-
       setBusy("verifying");
       const { token } = await verifySignature({
         address: session.address,
-        message: messageToSign, // MUST match what we signed
+        message: messageToSign, // must match signed string
         signature, // "0x..." hex
       });
 
@@ -155,9 +206,9 @@ export default function WalletLoginAuto() {
   // --- Render ---
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>התחברות עם SubWallet (אוטומטי)</Text>
+      <Text style={styles.title}>התחברות עם SubWallet</Text>
       <Text style={styles.subtitle}>
-        חיבור לארנק → יצירת nonce → חתימה אוטומטית באפליקציה → אימות בשרת.
+        חיבור לארנק → יצירת nonce → חתימה באפליקציה → אימות בשרת.
       </Text>
 
       <View style={styles.card}>
@@ -165,7 +216,8 @@ export default function WalletLoginAuto() {
         <TouchableOpacity
           style={styles.btnPrimary}
           onPress={handleConnect}
-          disabled={busy !== "idle"}
+          // לא ננעל על "connecting" כדי לאפשר לוזר להמשיך לנווט/ללחוץ
+          disabled={busy === "signing" || busy === "verifying"}
         >
           <Text style={styles.btnPrimaryText}>
             {busy === "connecting"
@@ -176,10 +228,14 @@ export default function WalletLoginAuto() {
           </Text>
         </TouchableOpacity>
 
-        {/* QR fallback (simulator / no app installed) */}
+        {/* Pairing: show QR and continue after approval (fallback stays visible) */}
         {wcUri && (
           <View style={{ alignItems: "center", marginTop: 16 }}>
-            <Text style={styles.label}>סרקי את ה-QR עם SubWallet</Text>
+            <Text style={[styles.label, { textAlign: "center" }]}>
+              פתחנו את הארנק. אם לא נפתח, סרקי את ה-QR או חזרי לאפליקציה ולחצי
+              "חזרתי מהארנק — המשך".
+            </Text>
+
             <View
               style={{
                 padding: 12,
@@ -191,14 +247,12 @@ export default function WalletLoginAuto() {
               <QRCode value={wcUri} size={220} />
             </View>
 
+            {/* כפתור המשך ידני — תמיד לחיץ */}
             <TouchableOpacity
               style={[styles.btnOutline, { marginTop: 12 }]}
               onPress={handleApproveAfterQr}
-              disabled={busy !== "idle"}
             >
-              <Text style={styles.btnOutlineText}>
-                {busy === "connecting" ? "מחכה לאישור…" : "סרקתי — המשך"}
-              </Text>
+              <Text style={styles.btnOutlineText}>חזרתי מהארנק — המשך</Text>
             </TouchableOpacity>
 
             <Text style={[styles.label, { marginTop: 8, textAlign: "center" }]}>
@@ -210,7 +264,7 @@ export default function WalletLoginAuto() {
         {/* After session → show address, nonce, sign/verify */}
         {session && (
           <>
-            <View style={styles.row}>
+            <View className="row" style={styles.row}>
               <Text style={styles.label}>כתובת:</Text>
               <Text style={styles.val}>
                 {session.address.slice(0, 10)}…{session.address.slice(-6)}
@@ -220,7 +274,7 @@ export default function WalletLoginAuto() {
             <TouchableOpacity
               style={[styles.btnOutline, { marginTop: 10 }]}
               onPress={handleNonce}
-              disabled={busy !== "idle"}
+              disabled={busy !== "idle"} // כאן כן ננעל בזמן בקשת nonce/חתימה
             >
               <Text style={styles.btnOutlineText}>
                 {busy === "nonce"
@@ -243,7 +297,7 @@ export default function WalletLoginAuto() {
                 <TouchableOpacity
                   style={[styles.btnPrimary, { marginTop: 10 }]}
                   onPress={handleSignAndVerify}
-                  disabled={busy !== "idle"}
+                  disabled={busy === "signing" || busy === "verifying"}
                 >
                   {busy === "signing" || busy === "verifying" ? (
                     <ActivityIndicator />
@@ -257,7 +311,6 @@ export default function WalletLoginAuto() {
         )}
       </View>
 
-      {/* Error box */}
       {!!err && (
         <View style={styles.errBox}>
           <Text style={styles.errText}>{err}</Text>
@@ -317,10 +370,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
   },
-  btnOutlineText: {
-    color: COLORS.primaryDark,
-    fontWeight: "800",
-  },
+  btnOutlineText: { color: COLORS.primaryDark, fontWeight: "800" },
   errBox: {
     marginTop: 14,
     borderRadius: 10,

@@ -18,11 +18,7 @@
     "ios": {
       "bundleIdentifier": "com.biddrop.app",
       "infoPlist": {
-        "LSApplicationQueriesSchemes": [
-          "subwallet",
-          "wc",
-          "https"
-        ]
+        "LSApplicationQueriesSchemes": ["subwallet", "wc", "https"]
       }
     },
     "android": {
@@ -35,10 +31,7 @@
       "intentFilters": [
         {
           "action": "VIEW",
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
+          "category": ["BROWSABLE", "DEFAULT"],
           "data": [
             {
               "scheme": "biddrop"
@@ -57,6 +50,7 @@
       "backgroundColor": "#ffffff"
     },
     "plugins": [
+      "./plugins/with-queries-subwallet.cjs",
       "expo-router",
       [
         "expo-splash-screen",
@@ -65,7 +59,9 @@
           "resizeMode": "cover",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
