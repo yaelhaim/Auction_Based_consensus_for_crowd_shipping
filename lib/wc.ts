@@ -1,9 +1,8 @@
-// WalletConnect helper with mobile deep linking + return-to-app:
-// - Prefer opening the WalletConnect "wc:" URI directly (most reliable).
-// - On Android, target SubWallet package explicitly via expo-intent-launcher.
-// - Append redirectUrl to deep links that support it so wallet can bounce back.
-// - If the app isn't installed, fall back to the store.
-// - QR fallback is still returned to the UI.
+// lib/wc.ts
+// WalletConnect helper with robust mobile deep linking to SubWallet
+// - Android: subwallet:// (with redirectUrl) → https universal → intent:// → package VIEW → raw wc: → store
+// - iOS: app.subwallet.mobile:// → wc: → subwallet:// (enc/raw) → https universal → App Store
+// - Includes bringSubWalletToFront() helper
 
 import SignClient from "@walletconnect/sign-client";
 import Constants from "expo-constants";
@@ -12,8 +11,6 @@ import { Platform } from "react-native";
 import * as IntentLauncher from "expo-intent-launcher";
 
 const POLKADOT_CHAIN_ID = "polkadot:91b171bb158e2d3848fa23a9f1c25182";
-
-// Official store identifiers (do not localize)
 const PLAY_PACKAGE = "app.subwallet.mobile";
 const PLAY_URL = `https://play.google.com/store/apps/details?id=${PLAY_PACKAGE}`;
 const APPSTORE_URL = "https://apps.apple.com/app/id1633050285";
@@ -30,10 +27,13 @@ if (!WC_PROJECT_ID) {
   );
 }
 
-// Build a return URL that wallets can bounce back to (requires app.json "scheme")
+const log = (...a: any[]) => {
+  if (__DEV__) console.log("[wc]", ...a);
+};
+
+// Return URL for bounce-back (requires app.json "scheme": "biddrop")
 export function getReturnUrl(): string {
-  // Example: biddrop://wc-callback
-  return Linking.createURL("wc-callback");
+  return Linking.createURL("wc-callback"); // biddrop://wc-callback
 }
 
 function normalizeSignature(res: any): string {
@@ -53,6 +53,118 @@ export type WCConnectResult =
       waitForApproval: () => Promise<WCSessionInfo>;
     };
 
+function buildOpenUrls(wcUri: string) {
+  const enc = encodeURIComponent(wcUri);
+  const redirectEnc = encodeURIComponent(getReturnUrl());
+  const redirectRaw = getReturnUrl();
+  return {
+    iosPrimary: `app.subwallet.mobile://wc?uri=${enc}&redirectUrl=${redirectEnc}`,
+    iosAlt: `subwallet://wc?uri=${enc}&redirectUrl=${redirectEnc}`,
+    iosAltRaw: `subwallet://wc?uri=${wcUri}&redirectUrl=${redirectRaw}`,
+    iosUniversal: `https://wallet.subwallet.app/wc?uri=${enc}&redirectUrl=${redirectEnc}`,
+    androidScheme: `subwallet://wc?uri=${enc}&redirectUrl=${redirectEnc}`,
+    androidIntent: `intent://wc?uri=${enc}&redirectUrl=${redirectEnc}#Intent;scheme=subwallet;package=${PLAY_PACKAGE};end`,
+    androidUniversal: `https://wallet.subwallet.app/wc?uri=${enc}&redirectUrl=${redirectEnc}`,
+    androidSchemeRaw: `subwallet://wc?uri=${wcUri}&redirectUrl=${redirectRaw}`,
+    genericWc: wcUri,
+  };
+}
+
+/** Open SubWallet with wc: URI or route to store (best-effort, never throws). */
+export async function openSubWalletOrStore(
+  wcUri?: string
+): Promise<"opened" | "store" | "noop"> {
+  try {
+    if (!wcUri) return "noop";
+    log("openSubWalletOrStore wc:", wcUri.slice(0, 32) + "…");
+    const u = buildOpenUrls(wcUri);
+
+    if (Platform.OS === "android") {
+      try {
+        await Linking.openURL(u.androidScheme);
+        log("android: subwallet:// (enc) opened");
+        return "opened";
+      } catch (e) {
+        log("android: subwallet:// (enc) failed", e);
+      }
+      try {
+        await Linking.openURL(u.androidUniversal);
+        log("android: https universal opened");
+        return "opened";
+      } catch (e) {
+        log("android: https universal failed", e);
+      }
+      try {
+        await Linking.openURL(u.androidIntent);
+        log("android: intent:// opened");
+        return "opened";
+      } catch (e) {
+        log("android: intent:// failed", e);
+      }
+      try {
+        await Linking.openURL(u.androidSchemeRaw);
+        log("android: subwallet:// (raw) opened");
+        return "opened";
+      } catch (e) {
+        log("android: subwallet:// (raw) failed", e);
+      }
+      try {
+        await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
+          data: wcUri,
+          packageName: PLAY_PACKAGE,
+          category: "android.intent.category.BROWSABLE",
+          flags: 0,
+        });
+        log("android: VIEW wc: to package opened");
+        return "opened";
+      } catch (e) {
+        log("android: VIEW wc: failed", e);
+      }
+      try {
+        await Linking.openURL(u.genericWc);
+        log("android: wc: opened");
+        return "opened";
+      } catch {}
+      await Linking.openURL(PLAY_URL);
+      log("android: opening Play Store");
+      return "store";
+    } else {
+      try {
+        await Linking.openURL(u.iosPrimary);
+        log("ios: app.subwallet.mobile opened");
+        return "opened";
+      } catch (e) {
+        log("ios: app.subwallet.mobile failed", e);
+      }
+      try {
+        await Linking.openURL(u.genericWc);
+        log("ios: wc: opened");
+        return "opened";
+      } catch {}
+      try {
+        await Linking.openURL(u.iosAlt);
+        log("ios: subwallet:// (enc) opened");
+        return "opened";
+      } catch {}
+      try {
+        await Linking.openURL(u.iosAltRaw);
+        log("ios: subwallet:// (raw) opened");
+        return "opened";
+      } catch {}
+      try {
+        await Linking.openURL(u.iosUniversal);
+        log("ios: https universal opened");
+        return "opened";
+      } catch {}
+      await Linking.openURL(APPSTORE_URL);
+      log("ios: opening App Store");
+      return "store";
+    }
+  } catch {
+    return "noop";
+  }
+}
+
 export async function getWCClient(): Promise<SignClient> {
   if (_client) return _client;
   _client = await SignClient.init({
@@ -69,115 +181,28 @@ export async function getWCClient(): Promise<SignClient> {
   return _client;
 }
 
-/**
- * Try to open SubWallet app if installed, passing the WC URI.
- * If the app is not available, open the appropriate store page.
- * BEST-EFFORT: resolves to a hint string and never throws.
- */
-export async function openSubWalletOrStore(
-  wcUri?: string
-): Promise<"opened" | "store" | "noop"> {
-  try {
-    if (__DEV__) console.log("WalletConnect URI:", wcUri);
-    const redirect = encodeURIComponent(getReturnUrl());
-
-    if (Platform.OS === "android") {
-      // 1) Strongest: open the "wc:" URI explicitly with SubWallet package
-      if (wcUri && wcUri.startsWith("wc:")) {
-        try {
-          await IntentLauncher.startActivityAsync(
-            "android.intent.action.VIEW",
-            {
-              data: wcUri,
-              packageName: PLAY_PACKAGE,
-              category: "android.intent.category.BROWSABLE",
-              flags: 0,
-            }
-          );
-          return "opened";
-        } catch (e) {
-          if (__DEV__) console.warn("Intent to SubWallet failed →", e);
-        }
-      }
-
-      // 2) Android intent deep link (adds redirectUrl)
-      if (wcUri) {
-        const enc = encodeURIComponent(wcUri);
-        const intentUrl = `intent://wc?uri=${enc}&redirectUrl=${redirect}#Intent;scheme=subwallet;package=${PLAY_PACKAGE};end`;
-        try {
-          await Linking.openURL(intentUrl);
-          return "opened";
-        } catch {}
-      }
-
-      // 3) subwallet:// scheme (adds redirectUrl)
-      if (wcUri) {
-        const enc = encodeURIComponent(wcUri);
-        const subUrl = `subwallet://wc?uri=${enc}&redirectUrl=${redirect}`;
-        try {
-          await Linking.openURL(subUrl);
-          return "opened";
-        } catch {}
-      }
-
-      // 4) Generic: any wallet that handles "wc:"
-      if (wcUri && wcUri.startsWith("wc:")) {
-        try {
-          await Linking.openURL(wcUri);
-          return "opened";
-        } catch {}
-      }
-
-      // 5) Store
-      await Linking.openURL(PLAY_URL);
-      return "store";
-    } else {
-      // iOS: try wc: → subwallet:// → universal (with redirectUrl) → App Store
-      if (wcUri && wcUri.startsWith("wc:")) {
-        try {
-          await Linking.openURL(wcUri);
-          return "opened";
-        } catch {}
-      }
-      if (wcUri) {
-        const enc = encodeURIComponent(wcUri);
-        try {
-          await Linking.openURL(
-            `subwallet://wc?uri=${enc}&redirectUrl=${redirect}`
-          );
-          return "opened";
-        } catch {}
-        try {
-          await Linking.openURL(
-            `https://wallet.subwallet.app/wc?uri=${enc}&redirectUrl=${redirect}`
-          );
-          return "opened";
-        } catch {}
-      }
-      await Linking.openURL(APPSTORE_URL);
-      return "store";
-    }
-  } catch {
-    return "noop";
-  }
-}
-
 export async function connect(): Promise<WCConnectResult> {
   const client = await getWCClient();
 
+  const ns = {
+    methods: ["polkadot_signMessage"],
+    chains: [POLKADOT_CHAIN_ID],
+    events: [],
+  };
+
   const { uri, approval } = await client.connect({
-    requiredNamespaces: {
-      polkadot: {
-        methods: ["polkadot_signMessage"],
-        chains: [POLKADOT_CHAIN_ID],
-        events: [],
-      },
-    },
+    requiredNamespaces: { polkadot: ns },
+    optionalNamespaces: { polkadot: ns },
   });
 
   const resolveSession = async () => {
     const s = await approval();
-    const acct = s.namespaces.polkadot.accounts[0] as string; // "polkadot:<chainId>:<address>"
+    const acct = s.namespaces?.polkadot?.accounts?.[0] as string | undefined;
+    if (!acct) {
+      throw new Error(
+        "No Polkadot account returned by wallet. In SubWallet add a Polkadot account (mainnet) and try again."
+      );
+    }
     const address = acct.split(":")[2];
     return { topic: s.topic, address, raw: s };
   };
@@ -195,10 +220,44 @@ export async function signMessage(
   const res = await client.request({
     topic,
     chainId: POLKADOT_CHAIN_ID,
-    request: {
-      method: "polkadot_signMessage",
-      params: { address, message }, // exact server string
-    },
+    request: { method: "polkadot_signMessage", params: { address, message } },
   });
   return normalizeSignature(res);
+}
+
+/** Bring SubWallet app to foreground (helps surface sign prompts). */
+export async function bringSubWalletToFront(): Promise<"opened" | "noop"> {
+  try {
+    if (Platform.OS === "android") {
+      try {
+        await Linking.openURL("subwallet://");
+        log("bringToFront: subwallet:// opened");
+        return "opened";
+      } catch {}
+      try {
+        await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
+          packageName: PLAY_PACKAGE,
+          category: "android.intent.category.BROWSABLE",
+          flags: 0,
+        });
+        log("bringToFront: package VIEW opened");
+        return "opened";
+      } catch {}
+      return "noop";
+    } else {
+      try {
+        await Linking.openURL("app.subwallet.mobile://");
+        log("bringToFront: ios primary opened");
+        return "opened";
+      } catch {}
+      try {
+        await Linking.openURL("subwallet://");
+        log("bringToFront: ios alt opened");
+        return "opened";
+      } catch {}
+      return "noop";
+    }
+  } catch {
+    return "noop";
+  }
 }
