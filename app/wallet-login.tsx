@@ -1,7 +1,5 @@
-// UI for wallet login flow with:
-//   Connect → (auto open wallet or store) → (QR fallback) → Nonce → Sign → Verify
-// Auto-resume: when returning from wallet (deep link or app focus), we finalize approval
-// WITHOUT locking the UI while waiting for wallet approval.
+// Wallet login flow: Connect → Nonce → Sign → Verify
+// Clean UI: smaller QR, centered layout, auto navigation.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -15,11 +13,11 @@ import {
   AppState,
   AppStateStatus,
   Platform,
-  ToastAndroid,
 } from "react-native";
 import * as Linking from "expo-linking";
 import QRCode from "react-native-qrcode-svg";
 import { useRouter } from "expo-router";
+import AnimatedBgBlobs from "./components/AnimatedBgBlobs"; // ⭐ רקע דינאמי
 
 import {
   connect as wcConnect,
@@ -29,19 +27,19 @@ import {
   openSubWalletOrStore,
   bringSubWalletToFront,
 } from "../lib/wc";
-import { getNonce, verifySignature } from "../lib/api";
+import { getNonce, verifySignature, getMyProfile } from "../lib/api";
 
 const COLORS = {
   bg: "#ffffff",
   text: "#060606",
-  dim: "#8a8a8a",
+  dim: "#6b7280",
   primary: "#9bac70",
   primaryDark: "#475530",
   border: "#e5e7eb",
   error: "#b91c1c",
 };
 
-export default function WalletLoginAuto() {
+export default function WalletLogin() {
   const router = useRouter();
 
   const [session, setSession] = useState<WCSessionInfo | null>(null);
@@ -53,16 +51,8 @@ export default function WalletLoginAuto() {
   const [err, setErr] = useState<string | null>(null);
 
   const [wcUri, setWcUri] = useState<string | null>(null);
-  const [waitForApproval, setWaitForApproval] = useState<
-    null | (() => Promise<WCSessionInfo>)
-  >(null);
-
   const approvalPromiseRef = useRef<Promise<WCSessionInfo> | null>(null);
   const finalizingRef = useRef(false);
-
-  const log = (...a: any[]) => {
-    if (__DEV__) console.log("[WalletLogin]", ...a);
-  };
 
   const requestNonce = useCallback(async (address: string) => {
     setBusy("nonce");
@@ -70,51 +60,40 @@ export default function WalletLoginAuto() {
     setNonce(nonce);
     setMessageToSign(message_to_sign);
     setBusy("idle");
-    Alert.alert("מחוברת", "Nonce נוצר. אפשר לחתום.");
   }, []);
 
   const finalizeAfterApproval = useCallback(async () => {
     if (finalizingRef.current) return;
     const p = approvalPromiseRef.current;
-    if (!p) {
-      log("finalize: no approval promise");
-      return;
-    }
+    if (!p) return;
 
     finalizingRef.current = true;
     try {
-      log("finalize: waiting for approval()");
       const s = await p;
-      log("finalize: approved", s?.topic, s?.address);
       approvalPromiseRef.current = null;
       setSession(s);
       setWcUri(null);
-      setWaitForApproval(null);
       await requestNonce(s.address);
-    } catch (e: any) {
-      log("finalize: not approved yet / failed:", e?.message || e);
     } finally {
       finalizingRef.current = false;
     }
   }, [requestNonce]);
 
+  // Resume when app returns to foreground / deep link arrives
   useEffect(() => {
-    const onAppStateChange = (state: AppStateStatus) => {
-      if (state === "active") finalizeAfterApproval();
+    const onAppState = (st: AppStateStatus) => {
+      if (st === "active") finalizeAfterApproval();
     };
-    const sub = AppState.addEventListener("change", onAppStateChange);
+    const sub = AppState.addEventListener("change", onAppState);
     return () => sub.remove();
   }, [finalizeAfterApproval]);
 
   useEffect(() => {
-    const onUrl = ({ url }: { url: string }) => {
-      log("Deep link received:", url);
-      finalizeAfterApproval();
-    };
+    const onUrl = () => finalizeAfterApproval();
     const sub = Linking.addEventListener("url", onUrl);
     (async () => {
-      const firstUrl = await Linking.getInitialURL();
-      if (firstUrl) onUrl({ url: firstUrl });
+      const first = await Linking.getInitialURL();
+      if (first) onUrl();
     })();
     return () => sub.remove();
   }, [finalizeAfterApproval]);
@@ -122,305 +101,217 @@ export default function WalletLoginAuto() {
   const handleConnect = useCallback(async () => {
     setErr(null);
     setWcUri(null);
-    setWaitForApproval(null);
     approvalPromiseRef.current = null;
-
     try {
       setBusy("connecting");
-      log("connect(): wcConnect()");
       const res: WCConnectResult = await wcConnect();
       setBusy("idle");
-      log("connect(): result type =", res.type);
 
       if (res.type === "approved") {
         setSession(res.session);
         await requestNonce(res.session.address);
       } else {
         setWcUri(res.uri);
-        setWaitForApproval(() => res.waitForApproval);
         approvalPromiseRef.current = res.waitForApproval();
-        log("connect(): got uri (len)", res.uri.length);
-
-        openSubWalletOrStore(res.uri)
-          .then((hint) => {
-            log("openSubWalletOrStore() →", hint);
-            if (hint === "noop" || hint === "store") {
-              setTimeout(() => {
-                openSubWalletOrStore(res.uri)
-                  .then((h) => log("retry open →", h))
-                  .catch((e) => log("retry open error:", e));
-              }, 600);
-            }
-          })
-          .catch((e) => log("openSubWalletOrStore error:", e));
-
+        openSubWalletOrStore(res.uri).catch(() => {});
         finalizeAfterApproval();
       }
     } catch (e: any) {
       setBusy("idle");
-      const msg = e?.message || "החיבור נכשל";
-      log("connect() error:", msg);
-      setErr(msg);
+      setErr(e?.message || "החיבור נכשל");
     }
   }, [requestNonce, finalizeAfterApproval]);
 
-  const handleApproveAfterQr = useCallback(async () => {
-    if (!approvalPromiseRef.current) {
-      Alert.alert(
-        "אין עדיין אישור מהארנק",
-        "פתחי את SubWallet ואשרי את החיבור (או סרקי את ה-QR) ואז חזרי."
-      );
-      log("approve CTA: no approval promise");
-      return;
-    }
-    await finalizeAfterApproval();
-  }, [finalizeAfterApproval]);
-
-  const handleNonce = useCallback(async () => {
-    if (!session?.address) {
-      Alert.alert("שגיאה", "חסרה כתובת. התחברי לארנק קודם.");
-      return;
-    }
-    setErr(null);
-    try {
-      await requestNonce(session.address);
-    } catch (e: any) {
-      setBusy("idle");
-      setErr(e?.message || "נכשלה בקשת nonce");
-    }
-  }, [session, requestNonce]);
-
-  // ✅ Sign flow: first send request, THEN bring wallet to front (so it shows the sign prompt, not "connection succeeded")
   const handleSignAndVerify = useCallback(async () => {
     if (!session?.topic || !session?.address || !messageToSign) {
-      Alert.alert("שגיאה", "חסר session או הודעה לחתימה.");
+      setErr("חסר session או הודעה לחתימה.");
       return;
     }
     setErr(null);
-
     try {
       setBusy("signing");
-      const logMsg = (...a: any[]) =>
-        __DEV__ && console.log("[WalletLogin] sign:", ...a);
-
-      // 1) שליחת בקשת חתימה מיד
-      logMsg("request polkadot_signMessage");
       const signPromise = wcSignMessage(
         session.topic,
         session.address,
         messageToSign
       );
 
-      // 2) אחרי ~200ms מעלים את הארנק לפרונט כדי להציג את חלון החתימה הנכון
-      const bringTimer = setTimeout(() => {
-        logMsg("bring wallet to front for sign prompt");
+      // surface wallet sign prompt
+      const t1 = setTimeout(() => {
         bringSubWalletToFront().catch(() => {});
       }, 200);
-
-      // 3) אם תוך 3 שניות אין prompt – ננסה שוב להבליט
-      const nudgeTimer = setTimeout(() => {
-        logMsg("no prompt yet → bringToFront again");
+      const t2 = setTimeout(() => {
         bringSubWalletToFront().catch(() => {});
       }, 3000);
 
       const signature = await signPromise;
-      clearTimeout(bringTimer);
-      clearTimeout(nudgeTimer);
+      clearTimeout(t1);
+      clearTimeout(t2);
 
-      // 4) אימות בצד שרת
       setBusy("verifying");
-      const { token } = await verifySignature({
+      const { token, is_new_user } = await verifySignature({
         address: session.address,
         message: messageToSign,
         signature,
       });
 
       setBusy("idle");
-      Alert.alert("התחברת", token ? `token: ${token.slice(0, 12)}…` : "OK");
-      router.replace("/home");
+
+      const tokenStr = String(token);
+
+      if (is_new_user === true) {
+        router.replace({
+          pathname: "/profile-setup",
+          params: { token: tokenStr },
+        });
+      } else {
+        try {
+          const me = await getMyProfile(tokenStr);
+          if (!me || !me.first_name) {
+            router.replace({
+              pathname: "/profile-setup",
+              params: { token: tokenStr },
+            });
+            return;
+          }
+        } catch {
+          router.replace({
+            pathname: "/profile-setup",
+            params: { token: tokenStr },
+          });
+          return;
+        }
+        router.replace("/home");
+      }
     } catch (e: any) {
       setBusy("idle");
-      const m = e?.message || "חתימה/אימות נכשלו";
-      __DEV__ && console.log("[WalletLogin] sign error:", m);
-      if (m.includes("request") || m.includes("timeout")) {
-        Alert.alert(
-          "לא התקבלה חתימה",
-          "אם לא הופיע חלון חתימה בארנק, פתחי את SubWallet ידנית ואשרי. אפשר גם ללחוץ שוב 'פתחי את SubWallet עכשיו'."
-        );
-      }
-      setErr(m);
+      setErr(e?.message || "חתימה/אימות נכשלו");
     }
   }, [session, messageToSign, router]);
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>התחברות עם SubWallet</Text>
-      <Text style={styles.subtitle}>
-        חיבור לארנק → יצירת nonce → חתימה באפליקציה → אימות בשרת.
-      </Text>
+    <View style={styles.screen}>
+      {/* ⭐ רקע דינאמי */}
+      <AnimatedBgBlobs />
 
-      <View style={styles.card}>
-        <TouchableOpacity
-          style={styles.btnPrimary}
-          onPress={handleConnect}
-          disabled={busy === "signing" || busy === "verifying"}
-        >
-          <Text style={styles.btnPrimaryText}>
-            {busy === "connecting"
-              ? "מתחבר…"
-              : session
-              ? "מחובר ✓"
-              : "התחברי עם SubWallet"}
-          </Text>
-        </TouchableOpacity>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[
+          styles.content,
+          { flexGrow: 1, justifyContent: "center" },
+        ]} // ⭐ מרכז אנכית
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>התחברות עם SubWallet</Text>
+        <Text style={styles.subtitle}>
+          חיבור לארנק → יצירת Nonce → חתימה → אימות.
+        </Text>
 
-        {wcUri && (
-          <View style={{ alignItems: "center", marginTop: 16 }}>
-            <Text style={[styles.label, { textAlign: "center" }]}>
-              פתחנו את הארנק. אם לא נפתח, נסי לפתוח ידנית או סרקי את ה-QR.
+        <View style={styles.card}>
+          {/* Connect / Connected */}
+          <TouchableOpacity
+            style={styles.btnPrimary}
+            onPress={handleConnect}
+            disabled={busy === "signing" || busy === "verifying"}
+          >
+            <Text style={styles.btnPrimaryText}>
+              {busy === "connecting"
+                ? "מתחברת…"
+                : session
+                ? "מחוברת ✓"
+                : "התחברי עם SubWallet"}
             </Text>
+          </TouchableOpacity>
 
-            <View
-              style={{
-                padding: 12,
-                backgroundColor: "#fff",
-                borderRadius: 12,
-                marginTop: 8,
-              }}
-            >
-              <QRCode value={wcUri} size={220} />
+          {/* QR (smaller) with a clear caption */}
+          {wcUri && (
+            <View style={{ alignItems: "center", marginTop: 14 }}>
+              <Text style={[styles.label, { textAlign: "center" }]}>
+                אפשר לסרוק את הקוד באפליקציית SubWallet כדי לאשר את ההתחברות.
+              </Text>
+              <View style={styles.qrWrap}>
+                <QRCode value={wcUri} size={170} />
+              </View>
+              <TouchableOpacity
+                style={[styles.btnOutline, { marginTop: 10 }]}
+                onPress={() => wcUri && openSubWalletOrStore(wcUri)}
+              >
+                <Text style={styles.btnOutlineText}>
+                  פתחי את SubWallet עכשיו
+                </Text>
+              </TouchableOpacity>
             </View>
+          )}
 
-            <TouchableOpacity
-              style={[styles.btnOutline, { marginTop: 10 }]}
-              onPress={async () => {
-                if (!wcUri) return;
-                try {
-                  const hint = await openSubWalletOrStore(wcUri);
-                  log("manual openSubWalletOrStore →", hint);
-                  if (hint === "store" || hint === "noop") {
-                    const msg =
-                      "לא הצלחתי לפתוח את SubWallet. נסי לסרוק את ה-QR.";
-                    Platform.OS === "android"
-                      ? ToastAndroid.show(msg, ToastAndroid.SHORT)
-                      : Alert.alert("שימי לב", msg);
-                  }
-                } catch (e) {
-                  log("manual open error:", e);
-                }
-              }}
-            >
-              <Text style={styles.btnOutlineText}>פתחי את SubWallet עכשיו</Text>
-            </TouchableOpacity>
+          {/* Address + Nonce */}
+          {session && (
+            <>
+              <View style={styles.row}>
+                <Text style={styles.label}>כתובת</Text>
+                <Text style={styles.val}>
+                  {session.address.slice(0, 10)}…{session.address.slice(-6)}
+                </Text>
+              </View>
 
-            <TouchableOpacity
-              style={[styles.btnOutline, { marginTop: 10 }]}
-              onPress={handleApproveAfterQr}
-            >
-              <Text style={styles.btnOutlineText}>חזרתי מהארנק — המשך</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnOutline, { marginTop: 10 }]}
+                onPress={() => requestNonce(session.address)}
+                disabled={busy !== "idle"}
+              >
+                <Text style={styles.btnOutlineText}>
+                  {busy === "nonce"
+                    ? "יוצרת Nonce…"
+                    : nonce
+                    ? "Nonce נוצר ✓"
+                    : "צרי Nonce"}
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.btnOutline, { marginTop: 10 }]}
-              onPress={async () => {
-                log("reset pairing → reconnect");
-                approvalPromiseRef.current = null;
-                setWcUri(null);
-                setWaitForApproval(null);
-                try {
-                  setBusy("connecting");
-                  const res = await wcConnect();
-                  setBusy("idle");
-                  if (res.type === "approved") {
-                    setSession(res.session);
-                    await requestNonce(res.session.address);
-                  } else {
-                    setWcUri(res.uri);
-                    setWaitForApproval(() => res.waitForApproval);
-                    approvalPromiseRef.current = res.waitForApproval();
-                    openSubWalletOrStore(res.uri).catch(() => {});
-                  }
-                } catch (e: any) {
-                  setBusy("idle");
-                  setErr(e?.message || "החיבור נכשל");
-                }
-              }}
-            >
-              <Text style={styles.btnOutlineText}>נסי חיבור מחדש</Text>
-            </TouchableOpacity>
+              {!!nonce && (
+                <>
+                  <Text style={[styles.label, { marginTop: 12 }]}>
+                    הודעת התחברות
+                  </Text>
+                  <View style={styles.msgBox}>
+                    <Text style={styles.msgText}>{messageToSign}</Text>
+                  </View>
 
-            <Text style={[styles.label, { marginTop: 8, textAlign: "center" }]}>
-              {wcUri.slice(0, 42)}…
-            </Text>
+                  <TouchableOpacity
+                    style={[styles.btnPrimary, { marginTop: 10 }]}
+                    onPress={handleSignAndVerify}
+                    disabled={busy === "signing" || busy === "verifying"}
+                  >
+                    {busy === "signing" || busy === "verifying" ? (
+                      <ActivityIndicator />
+                    ) : (
+                      <Text style={styles.btnPrimaryText}>חתמי ואשרי</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+            </>
+          )}
+        </View>
+
+        {!!err && (
+          <View style={styles.errBox}>
+            <Text style={styles.errText}>{err}</Text>
           </View>
         )}
-
-        {session && (
-          <>
-            <View className="row" style={styles.row}>
-              <Text style={styles.label}>כתובת:</Text>
-              <Text style={styles.val}>
-                {session.address.slice(0, 10)}…{session.address.slice(-6)}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.btnOutline, { marginTop: 10 }]}
-              onPress={handleNonce}
-              disabled={busy !== "idle"}
-            >
-              <Text style={styles.btnOutlineText}>
-                {busy === "nonce"
-                  ? "יוצרת Nonce…"
-                  : nonce
-                  ? "Nonce נוצר ✓"
-                  : "צרי Nonce"}
-              </Text>
-            </TouchableOpacity>
-
-            {!!nonce && (
-              <>
-                <Text style={[styles.label, { marginTop: 12 }]}>
-                  הודעת התחברות
-                </Text>
-                <View style={styles.msgBox}>
-                  <Text style={styles.msgText}>{messageToSign}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.btnPrimary, { marginTop: 10 }]}
-                  onPress={handleSignAndVerify}
-                  disabled={busy === "signing" || busy === "verifying"}
-                >
-                  {busy === "signing" || busy === "verifying" ? (
-                    <ActivityIndicator />
-                  ) : (
-                    <Text style={styles.btnPrimaryText}>חתמי ואשרי</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
-          </>
-        )}
-      </View>
-
-      {!!err && (
-        <View style={styles.errBox}>
-          <Text style={styles.errText}>{err}</Text>
-        </View>
-      )}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 16, paddingBottom: 28 },
+  content: { padding: 16, paddingBottom: 28, alignItems: "center" }, // ⭐ אלמנטים באמצע
   title: {
     fontSize: 22,
     fontWeight: "800",
     color: COLORS.text,
     textAlign: "center",
+    writingDirection: "rtl",
   },
   subtitle: {
     fontSize: 13,
@@ -428,6 +319,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: "center",
     lineHeight: 18,
+    writingDirection: "rtl",
   },
   card: {
     marginTop: 16,
@@ -436,9 +328,11 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
+    width: "100%",
+    maxWidth: 520, // ⭐ נראה טוב במסכים רחבים וקטנים
   },
   row: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  label: { fontSize: 12, color: COLORS.dim },
+  label: { fontSize: 12, color: COLORS.dim, writingDirection: "rtl" },
   val: { fontSize: 12, color: COLORS.text },
   msgBox: {
     borderWidth: 1,
@@ -448,10 +342,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#fafafa",
   },
   msgText: { color: COLORS.text, fontSize: 12 },
+  qrWrap: {
+    padding: 10,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+  },
   btnPrimary: {
     backgroundColor: COLORS.primary,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
   },
   btnPrimaryText: { color: "#fff", fontWeight: "800" },
@@ -460,7 +362,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.primaryDark,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
   },
   btnOutlineText: { color: COLORS.primaryDark, fontWeight: "800" },
@@ -471,6 +373,8 @@ const styles = StyleSheet.create({
     padding: 10,
     borderWidth: 1,
     borderColor: "#fca5a5",
+    width: "100%",
+    maxWidth: 520,
   },
   errText: { color: COLORS.error, textAlign: "center" },
 });

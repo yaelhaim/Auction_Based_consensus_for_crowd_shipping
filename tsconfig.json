@@ -2,6 +2,7 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "jsx": "react",
+    "types": ["expo-router/types"],
     "strict": true,
     "paths": {
       "@/*": ["./*"]

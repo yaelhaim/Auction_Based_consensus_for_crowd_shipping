@@ -1,7 +1,10 @@
 // app/lib/api.ts
-// API helpers for the wallet-auth flow (POST-only).
+// API helpers for the wallet-auth flow (POST-only) + basic profile endpoints.
 // - POST /auth/nonce       -> { wallet_address, nonce, message_to_sign, expires_at }
-// - POST /auth/verify      -> { user, access_token, token_type }
+// - POST /auth/verify      -> { user, access_token, token_type, is_new_user? }
+// - GET  /users/me         -> { first_name?, last_name?, phone?, email?, city?, ... }
+// - POST /users/profile    -> upsert basic profile fields
+//
 // We also expose a legacy { token } alias so existing UI code can keep using "token".
 
 import Constants from "expo-constants";
@@ -31,9 +34,30 @@ export type VerifyResponse = {
   access_token: string;
   token_type: string; // "bearer"
   user: any;
+  // Optional flag (recommended): server can return this when the wallet logs in for the first time.
+  is_new_user?: boolean;
 };
 
-// ---------- Internal JSON fetch helper ----------
+// Basic profile shape (extend as needed)
+export type UserProfile = {
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  email?: string;
+  city?: string;
+  // ...add fields your API returns
+};
+
+export type ProfileUpsertRequest = {
+  token: string; // bearer token from /auth/verify
+  first_name: string;
+  last_name: string;
+  phone: string;
+  email: string;
+  city: string;
+};
+
+// ---------- Internal JSON fetch helpers ----------
 async function jsonFetch(input: string, init?: RequestInit) {
   const res = await fetch(input, init);
   let data: any = null;
@@ -52,6 +76,10 @@ async function jsonFetch(input: string, init?: RequestInit) {
     );
   }
   return data;
+}
+
+function authHeaders(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
 }
 
 // ---------- Public API ----------
@@ -73,7 +101,7 @@ export async function getNonce(address: string): Promise<NonceResponse> {
  * Verify signature (POST).
  * Client provides { address, message, signature }.
  * Server expects { wallet_address, signed_message, signature } and returns
- * { user, access_token, token_type }. We also return { token } as an alias.
+ * { user, access_token, token_type, is_new_user? }. We also return { token } as an alias.
  */
 export async function verifySignature(params: {
   address: string;
@@ -98,5 +126,43 @@ export async function verifySignature(params: {
     access_token: data.access_token,
     token_type: data.token_type ?? "bearer",
     user: data.user,
+    is_new_user: data.is_new_user, // may be undefined if server doesn't send it
   };
+}
+
+/**
+ * Fetch current user's profile using bearer token.
+ * GET /users/me -> { first_name?, last_name?, phone?, email?, city?, ... }
+ */
+export async function getMyProfile(token: string): Promise<UserProfile> {
+  const data = await jsonFetch(`${BASE_URL}/users/me`, {
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+  return data as UserProfile;
+}
+
+/**
+ * Create/update (upsert) profile fields after first login.
+ * POST /users/profile with JSON body (adjust path/method if your backend differs).
+ */
+export async function upsertProfile(
+  req: ProfileUpsertRequest
+): Promise<UserProfile> {
+  const data = await jsonFetch(`${BASE_URL}/users/profile`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(req.token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      first_name: req.first_name,
+      last_name: req.last_name,
+      phone: req.phone,
+      email: req.email,
+      city: req.city,
+    }),
+  });
+  return data as UserProfile;
 }
