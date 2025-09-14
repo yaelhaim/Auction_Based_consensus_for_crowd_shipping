@@ -1,4 +1,9 @@
-import React, { useMemo, useState } from "react";
+// app/profile-setup.tsx
+// Profile completion screen.
+// If the profile is already completed (first_login_completed = true OR all fields present),
+// it redirects to /home_page. After successful save, redirects to /home_page as well.
+
+import React, { useMemo, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,8 +16,8 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { upsertProfile } from "../lib/api";
-import AnimatedBgBlobs from "./components/AnimatedBgBlobs"; // ⭐ רקע דינאמי
+import { upsertProfile, getMe } from "../lib/api";
+import AnimatedBgBlobs from "./components/AnimatedBgBlobs"; // visual background
 
 const COLORS = {
   text: "#111827",
@@ -33,6 +38,33 @@ export default function ProfileSetup() {
   const [city, setCity] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Guard: skip if the profile is already completed
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        if (!token) return;
+        const me = await getMe(String(token));
+        const completed =
+          !!me?.first_login_completed ||
+          (!!me?.first_name &&
+            !!me?.last_name &&
+            !!me?.phone &&
+            !!me?.email &&
+            !!me?.city);
+        if (mounted && completed) {
+          router.replace({ pathname: "/home_page", params: { token } });
+        }
+      } catch {
+        // ignore; allow the user to proceed with the form
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [token]);
+
+  // Require all fields to enable the button (you can relax this if you want)
   const ok = useMemo(
     () =>
       firstName.trim() &&
@@ -59,9 +91,9 @@ export default function ProfileSetup() {
         city,
       });
       setBusy(false);
-      Alert.alert("הפרטים נשמרו", "ברוכה הבאה ל-BidDrop!", [
-        { text: "המשך", onPress: () => router.replace("/home") },
-      ]);
+
+      // On success, the server sets first_login_completed = true.
+      router.replace({ pathname: "/home_page", params: { token } });
     } catch (e: any) {
       setBusy(false);
       Alert.alert("שגיאה", e?.message || "שמירת הפרטים נכשלה");
@@ -70,7 +102,6 @@ export default function ProfileSetup() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
-      {/* ⭐ רקע דינאמי */}
       <AnimatedBgBlobs />
 
       <KeyboardAvoidingView
@@ -82,7 +113,7 @@ export default function ProfileSetup() {
           contentContainerStyle={[
             styles.container,
             { flexGrow: 1, justifyContent: "center", alignItems: "center" },
-          ]} // ⭐ מרכז אנכית
+          ]}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.card}>
@@ -169,7 +200,7 @@ const styles = StyleSheet.create({
   container: { padding: 16, paddingBottom: 28 },
   card: {
     width: "100%",
-    maxWidth: 520, // ⭐ נראה טוב גם במסכים רחבים
+    maxWidth: 520,
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 16,

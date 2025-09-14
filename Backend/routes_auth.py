@@ -11,6 +11,21 @@ import os, secrets, binascii
 
 from .Database.db import get_db
 
+from substrateinterface.utils.ss58 import ss58_decode, ss58_encode
+
+SS58_PREFIX = 42  # או הפריפיקס של הרשת שלך
+
+
+def normalize_address(address: str) -> str:
+    """
+    Decode any valid SS58 and re-encode with our canonical prefix.
+    Always store & return this canonical form.
+    """
+    pubkey_hex = ss58_decode(address)      # hex (no 0x)
+    pubkey = bytes.fromhex(pubkey_hex)     # 32 bytes
+    return ss58_encode(pubkey, SS58_PREFIX)
+
+
 # --- JWT (HS256) ---
 from jose import jwt
 JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PROD")
@@ -71,126 +86,106 @@ LOGIN_PREFIX = "BidDrop login challenge: "
 # ----------------------------
 @router.post("/nonce")
 def issue_nonce(payload: dict, db: Session = Depends(get_db)):
-    """
-    Body: { "wallet_address": "<SS58 address>" }
-    - Generate a one-time nonce (valid 5 minutes, UTC-aware)
-    - Upsert into login_nonces(address, nonce, expires_at)
-    - Return { wallet_address, nonce, message_to_sign, expires_at }
-    """
-    address = (payload.get("wallet_address") or "").strip()
-    if not address:
+    address_raw = (payload.get("wallet_address") or "").strip()
+    if not address_raw:
         raise HTTPException(status_code=400, detail="wallet_address is required")
 
-    nonce = secrets.token_hex(16)  # 32 hex chars
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)  # UTC-aware
+    # Normalize server-side
+    try:
+        address = normalize_address(address_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid SS58 address")
 
-    q = text("""
+    nonce = secrets.token_hex(16)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    row = db.execute(text("""
         INSERT INTO login_nonces (address, nonce, expires_at)
         VALUES (:address, :nonce, :expires_at)
         ON CONFLICT (address)
         DO UPDATE SET nonce = EXCLUDED.nonce, expires_at = EXCLUDED.expires_at
         RETURNING address, nonce, expires_at
-    """)
-    row = db.execute(q, {"address": address, "nonce": nonce, "expires_at": expires_at}).mappings().first()
+    """), {"address": address, "nonce": nonce, "expires_at": expires_at}).mappings().first()
     db.commit()
 
     message_to_sign = f"{LOGIN_PREFIX}{row['nonce']}"
-
-    # Ensure ISO8601 with 'Z'
-    exp_iso = row["expires_at"]
-    if exp_iso.tzinfo is None:
-        exp_iso = exp_iso.replace(tzinfo=timezone.utc)
-    else:
-        exp_iso = exp_iso.astimezone(timezone.utc)
+    exp_iso = row["expires_at"].astimezone(timezone.utc)
 
     return {
-        "wallet_address": row["address"],
+        "wallet_address": row["address"],   # canonical
         "nonce": row["nonce"],
         "message_to_sign": message_to_sign,
         "expires_at": exp_iso.isoformat().replace("+00:00", "Z"),
     }
+
 
 # ----------------------------
 # 2) Verify signature
 # ----------------------------
 @router.post("/verify")
 def verify_signature(payload: dict, db: Session = Depends(get_db)):
-    """
-    Body:
-    {
-      "wallet_address": "<SS58>",
-      "signature": "<0x... hex>",
-      "signed_message": "BidDrop login challenge: <nonce>"
-    }
-    """
-    address = (payload.get("wallet_address") or "").strip()
+    address_raw = (payload.get("wallet_address") or "").strip()
     signature_hex = (payload.get("signature") or "").strip()
     signed_message = (payload.get("signed_message") or "").strip()
 
-    if not address or not signature_hex or not signed_message:
+    if not address_raw or not signature_hex or not signed_message:
         raise HTTPException(status_code=400, detail="wallet_address, signature and signed_message are required")
 
-    # Load nonce
-    row = db.execute(
-        text("SELECT nonce, expires_at FROM login_nonces WHERE address = :address"),
-        {"address": address}
-    ).mappings().first()
+    # Normalize first
+    try:
+        address = normalize_address(address_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid SS58 address")
+
+    # Load nonce for canonical address
+    row = db.execute(text(
+        "SELECT nonce, expires_at FROM login_nonces WHERE address = :address"
+    ), {"address": address}).mappings().first()
     if not row:
         raise HTTPException(status_code=400, detail="No active login challenge for this address. Request a new nonce.")
 
-    # Normalize DB timestamp to UTC-aware and compare
-    expires_at_db = row["expires_at"]
-    if expires_at_db.tzinfo is None:
-        expires_at_db = expires_at_db.replace(tzinfo=timezone.utc)
-    else:
-        expires_at_db = expires_at_db.astimezone(timezone.utc)
-
+    # Check TTL
+    expires_at_db = row["expires_at"].astimezone(timezone.utc)
     if datetime.now(timezone.utc) > expires_at_db:
         db.execute(text("DELETE FROM login_nonces WHERE address = :address"), {"address": address})
         db.commit()
         raise HTTPException(status_code=400, detail="Login challenge expired. Request a new nonce.")
 
-    # Must match server message format exactly
+    # Must match the server-issued message exactly
     expected_message = f"{LOGIN_PREFIX}{row['nonce']}"
     if signed_message != expected_message:
         raise HTTPException(status_code=400, detail="Signed message mismatch")
 
-    # Verify signature against wallet address
+    # Verify signature (as אצלך)
     ok = verify_wallet_signature(address=address, signed_message=signed_message, signature_hex=signature_hex)
     if not ok:
         raise HTTPException(status_code=401, detail="Signature verification failed")
 
-    # Upsert user (keep existing fields if exists)
-    user_row = db.execute(
-        text("SELECT id, wallet_address, role FROM users WHERE wallet_address = :wa"),
-        {"wa": address}
-    ).mappings().first()
+    # Upsert user by wallet_address
+    user_row = db.execute(text("""
+        INSERT INTO users (id, wallet_address, role, created_at, updated_at)
+        VALUES (gen_random_uuid(), :wa, 'sender', NOW(), NOW())
+        ON CONFLICT (wallet_address)
+        DO UPDATE SET updated_at = NOW()
+        RETURNING id, wallet_address, role
+    """), {"wa": address}).mappings().first()
 
-    if not user_row:
-        user_row = db.execute(text("""
-            INSERT INTO users (id, wallet_address, role, created_at, updated_at)
-            VALUES (gen_random_uuid(), :wa, 'sender', NOW(), NOW())
-            RETURNING id, wallet_address, role
-        """), {"wa": address}).mappings().first()
-    else:
-        user_row = db.execute(text("""
-            UPDATE users SET updated_at = NOW()
-            WHERE wallet_address = :wa
-            RETURNING id, wallet_address, role
-        """), {"wa": address}).mappings().first()
-
-    # One-time: remove nonce after successful verification
+    # Invalidate the nonce
     db.execute(text("DELETE FROM login_nonces WHERE address = :address"), {"address": address})
     db.commit()
 
     token = create_access_token(subject=address)
 
+    print("VERIFY OK for", address)
+    print("JWT len:", len(token))
+
     return {
         "user": {
             "id": str(user_row["id"]),
-            "wallet_address": user_row["wallet_address"],
+            "wallet_address": user_row["wallet_address"],  # canonical
             "role": user_row["role"],
         },
         "access_token": token,
         "token_type": "bearer",
     }
+

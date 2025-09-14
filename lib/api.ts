@@ -1,168 +1,185 @@
 // app/lib/api.ts
-// API helpers for the wallet-auth flow (POST-only) + basic profile endpoints.
-// - POST /auth/nonce       -> { wallet_address, nonce, message_to_sign, expires_at }
-// - POST /auth/verify      -> { user, access_token, token_type, is_new_user? }
-// - GET  /users/me         -> { first_name?, last_name?, phone?, email?, city?, ... }
-// - POST /users/profile    -> upsert basic profile fields
-//
-// We also expose a legacy { token } alias so existing UI code can keep using "token".
+// Adds strong logging so we can see *exactly* what URL and body are used.
+// Exposes BASE_URL for showing on-screen in the login screen.
 
 import Constants from "expo-constants";
 
-const BASE_URL =
+export const BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ??
   process.env.EXPO_PUBLIC_POBA_API ??
   (Constants.expoConfig?.extra as any)?.apiUrl ??
   "";
 
 if (!BASE_URL) {
-  throw new Error("חסר EXPO_PUBLIC_POBA_API (כתובת שרת ה-PoBA)");
+  // Important: this will show in Metro logs *and* throw so the UI knows
+  console.log(
+    "[API] Missing BASE_URL: set EXPO_PUBLIC_API_URL or EXPO_PUBLIC_POBA_API"
+  );
+  throw new Error(
+    "Missing API base URL. Set EXPO_PUBLIC_API_URL (or EXPO_PUBLIC_POBA_API) in your env."
+  );
 }
-console.log("API URL →", BASE_URL);
 
-// ---------- Types ----------
-export type NonceResponse = {
+console.log("[API] BASE_URL →", BASE_URL);
+
+export interface NonceResponse {
   wallet_address: string;
   nonce: string;
   message_to_sign: string;
-  expires_at: string; // ISO string
-};
+  expires_at: string;
+}
 
-export type VerifyResponse = {
-  // Keep legacy 'token' for compatibility with your screen Alert:
+export interface VerifyResponse {
   token: string;
-  // Canonical fields returned by backend:
-  access_token: string;
-  token_type: string; // "bearer"
-  user: any;
-  // Optional flag (recommended): server can return this when the wallet logs in for the first time.
   is_new_user?: boolean;
-};
+  access_token?: string;
+  token_type?: string;
+  user?: any;
+}
 
-// Basic profile shape (extend as needed)
-export type UserProfile = {
-  first_name?: string;
-  last_name?: string;
-  phone?: string;
-  email?: string;
-  city?: string;
-  // ...add fields your API returns
-};
+/** Server 'users' row. */
+export interface UserRow {
+  id: string;
+  wallet_address: string;
+  role: string;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  rating: number | null;
+  first_login_completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-export type ProfileUpsertRequest = {
-  token: string; // bearer token from /auth/verify
+export interface ProfileInput {
   first_name: string;
   last_name: string;
   phone: string;
   email: string;
   city: string;
-};
+}
 
-// ---------- Internal JSON fetch helpers ----------
-async function jsonFetch(input: string, init?: RequestInit) {
-  const res = await fetch(input, init);
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit & { timeoutMs?: number } = {}
+) {
+  const { timeoutMs = 12000, ...rest } = init;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  console.log("[API] →", rest.method || "GET", input);
+  if (rest.body) {
+    try {
+      console.log(
+        "[API]   body:",
+        typeof rest.body === "string" ? rest.body : "(non-string)"
+      );
+    } catch {}
+  }
+
+  try {
+    const res = await fetch(input, { ...rest, signal: ctrl.signal });
+    console.log("[API] ←", res.status, res.statusText);
+    return res;
+  } catch (err: any) {
+    console.log("[API] ✖ fetch error:", err?.name, err?.message || err);
+    if (err?.name === "AbortError") {
+      throw new Error("Request timeout. Check API URL / connectivity / CORS.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function jsonFetch<T = any>(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<T> {
+  const res = await fetchWithTimeout(url, init);
   let data: any = null;
   try {
     data = await res.json();
-  } catch {
-    // if response isn't JSON, keep null and handle as text below if needed
+  } catch (e) {
+    try {
+      const txt = await res.text();
+      console.log("[API] non-JSON response:", txt.slice(0, 200));
+    } catch {}
   }
   if (!res.ok) {
-    // Try to surface a meaningful error message
     const detail =
       (data && (data.detail || data.error)) ??
-      (await res.text().catch(() => `HTTP ${res.status}`));
+      (data && JSON.stringify(data)) ??
+      `HTTP ${res.status}`;
+    console.log("[API] error payload:", detail);
     throw new Error(
       typeof detail === "string" ? detail : JSON.stringify(detail)
     );
   }
-  return data;
+  return data as T;
 }
 
-function authHeaders(token: string): HeadersInit {
-  return { Authorization: `Bearer ${token}` };
-}
-
-// ---------- Public API ----------
-
-/**
- * Request a login nonce (POST).
- * Server expects: { wallet_address: "<SS58>" }
- * Returns: { wallet_address, nonce, message_to_sign, expires_at }
- */
 export async function getNonce(address: string): Promise<NonceResponse> {
   return jsonFetch(`${BASE_URL}/auth/nonce`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    timeoutMs: 12000,
     body: JSON.stringify({ wallet_address: address }),
   });
 }
 
-/**
- * Verify signature (POST).
- * Client provides { address, message, signature }.
- * Server expects { wallet_address, signed_message, signature } and returns
- * { user, access_token, token_type, is_new_user? }. We also return { token } as an alias.
- */
 export async function verifySignature(params: {
   address: string;
-  message: string; // must be EXACTLY the message that server asked to sign
-  signature: string; // hex "0x..."
+  message: string;
+  signature: string;
 }): Promise<VerifyResponse> {
-  const payload = {
-    wallet_address: params.address,
-    signed_message: params.message,
-    signature: params.signature,
-  };
-
   const data = await jsonFetch(`${BASE_URL}/auth/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    timeoutMs: 12000,
+    body: JSON.stringify({
+      wallet_address: params.address,
+      signed_message: params.message,
+      signature: params.signature,
+    }),
   });
 
-  // Normalize shape for the UI (keep legacy 'token'):
   return {
-    token: data.access_token,
+    token: data.access_token ?? data.token,
+    is_new_user: data.is_new_user,
     access_token: data.access_token,
-    token_type: data.token_type ?? "bearer",
+    token_type: data.token_type,
     user: data.user,
-    is_new_user: data.is_new_user, // may be undefined if server doesn't send it
   };
 }
 
-/**
- * Fetch current user's profile using bearer token.
- * GET /users/me -> { first_name?, last_name?, phone?, email?, city?, ... }
- */
-export async function getMyProfile(token: string): Promise<UserProfile> {
-  const data = await jsonFetch(`${BASE_URL}/users/me`, {
-    headers: {
-      ...authHeaders(token),
-    },
+/** Get the current user using the JWT (server resolves wallet via JWT 'sub'). */
+export async function getMyProfile(token: string): Promise<UserRow> {
+  return jsonFetch<UserRow>(`${BASE_URL}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeoutMs: 10000,
   });
-  return data as UserProfile;
 }
 
-/**
- * Create/update (upsert) profile fields after first login.
- * POST /users/profile with JSON body (adjust path/method if your backend differs).
- */
+/** Alias for screens that import getMe. */
+export const getMe = getMyProfile;
+
+/** Upsert the current user's profile. */
 export async function upsertProfile(
-  req: ProfileUpsertRequest
-): Promise<UserProfile> {
-  const data = await jsonFetch(`${BASE_URL}/users/profile`, {
-    method: "POST",
+  input: {
+    token: string;
+  } & ProfileInput
+): Promise<UserRow> {
+  const { token, ...payload } = input;
+  return jsonFetch<UserRow>(`${BASE_URL}/users/me`, {
+    method: "PUT",
     headers: {
-      ...authHeaders(req.token),
       "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      first_name: req.first_name,
-      last_name: req.last_name,
-      phone: req.phone,
-      email: req.email,
-      city: req.city,
-    }),
+    timeoutMs: 12000,
+    body: JSON.stringify(payload),
   });
-  return data as UserProfile;
 }

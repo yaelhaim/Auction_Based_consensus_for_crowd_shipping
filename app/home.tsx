@@ -31,10 +31,10 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* רקע דינאמי */}
+      {/* Dynamic background */}
       <AnimatedBgBlobs />
 
-      {/* עטיפת תוכן ממורכזת אנכית ואופקית */}
+      {/* Centered content wrapper */}
       <View style={styles.centerWrap}>
         <Text style={styles.title}>ברוכ/ה הבאה ל-BidDrop</Text>
         <Text style={styles.subtitle}>
@@ -48,21 +48,19 @@ export default function HomeScreen() {
           accessibilityLabel="התחברות או הרשמה עם SubWallet"
           testID="btn-connect-subwallet"
         >
-          <Text style={styles.buttonPrimaryText}>
+          <Text
+            style={styles.buttonPrimaryText}
+            numberOfLines={1} // keep on a single line
+            adjustsFontSizeToFit // auto-shrink to fit width
+            minimumFontScale={0.9} // do not shrink below 90%
+            allowFontScaling // respect OS accessibility
+            maxFontSizeMultiplier={1.2} // cap extreme system font sizes
+          >
             התחברות / הרשמה עם SubWallet
           </Text>
         </TouchableOpacity>
 
-        <Pressable
-          onPress={() => router.push("/wallet-login")}
-          accessibilityRole="link"
-          style={{ marginTop: 14 }}
-        >
-          <Text style={styles.signInText}>
-            יש לך כבר חשבון? <Text style={styles.signInLink}>התחברי</Text>
-          </Text>
-        </Pressable>
-
+        {/* Help trigger */}
         <Pressable
           onPress={() => setHelpVisible(true)}
           style={{ marginTop: 18 }}
@@ -71,7 +69,7 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
-      {/* מודאל עזרה */}
+      {/* Help modal */}
       <Modal
         visible={helpVisible}
         transparent
@@ -119,13 +117,15 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  // כל התוכן באמת במרכז, בלי "חלל מת" למטה
+
+  // Fully centered content (no dead space below)
   centerWrap: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 22,
   },
+
   title: {
     fontSize: 26,
     fontWeight: "800",
@@ -142,6 +142,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     writingDirection: "rtl",
   },
+
   buttonPrimary: {
     backgroundColor: COLORS.primarySoft,
     paddingVertical: 14,
@@ -155,9 +156,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
-  buttonPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  signInText: { color: COLORS.textDim, fontSize: 14, writingDirection: "rtl" },
-  signInLink: { color: COLORS.primary, fontWeight: "700" },
+  buttonPrimaryText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+    writingDirection: "rtl",
+    includeFontPadding: false, // Android: avoids extra top/bottom space
+    textAlignVertical: "center",
+  },
+
+  // Small help link below the button
   helpText: {
     color: COLORS.primary,
     fontSize: 13,
