@@ -11,12 +11,11 @@
     "extra": {
       "wcProjectId": "${EXPO_PUBLIC_WC_PROJECT_ID}",
       "router": {},
-      "eas": {
-        "projectId": "ba9c100f-a0df-467a-ab24-8ed14b5a8ae6"
-      }
+      "eas": { "projectId": "ba9c100f-a0df-467a-ab24-8ed14b5a8ae6" }
     },
     "ios": {
       "bundleIdentifier": "com.biddrop.app",
+      "icon": "./assets/images/icon.png",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "subwallet",
@@ -30,8 +29,8 @@
     "android": {
       "package": "com.biddrop.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/adaptive-icon-foreground-2.png",
+        "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
       "intentFilters": [
@@ -39,25 +38,15 @@
           "action": "VIEW",
           "category": ["BROWSABLE", "DEFAULT"],
           "data": [
-            {
-              "scheme": "biddrop"
-            },
-            {
-              "scheme": "subwallet"
-            },
-            {
-              "scheme": "app.subwallet.mobile"
-            }
+            { "scheme": "biddrop" },
+            { "scheme": "subwallet" },
+            { "scheme": "app.subwallet.mobile" }
           ]
         }
       ],
       "queries": [
-        {
-          "scheme": "subwallet"
-        },
-        {
-          "scheme": "app.subwallet.mobile"
-        }
+        { "scheme": "subwallet" },
+        { "scheme": "app.subwallet.mobile" }
       ]
     },
     "web": {
@@ -66,24 +55,16 @@
       "favicon": "./assets/images/icon.png"
     },
     "splash": {
+      "image": "./assets/images/SplashScreen.png",
       "resizeMode": "cover",
       "backgroundColor": "#ffffff"
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/SplashScreen.png",
-          "resizeMode": "cover",
-          "backgroundColor": "#ffffff"
-        }
-      ],
+      "expo-splash-screen",
       "expo-font",
       "expo-web-browser"
     ],
-    "experiments": {
-      "typedRoutes": true
-    }
+    "experiments": { "typedRoutes": true }
   }
 }

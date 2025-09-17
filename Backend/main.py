@@ -7,6 +7,10 @@ from sqlalchemy.orm import Session
 from .Database.db import get_db   # updated import
 from .routes_users import router as users_router
 from .routes_auth import router as auth_router
+from .routes_sender import router as sender_router
+from .routes_rider import router as rider_router       
+from .routes_courier import router as courier_router
+from .routes_requests import router as requests_router
 
 
 app = FastAPI()
@@ -29,6 +33,10 @@ def db_health(db: Session = Depends(get_db)):
 
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(sender_router)
+app.include_router(rider_router) 
+app.include_router(courier_router) 
+app.include_router(requests_router)
 
 
 @app.get("/debug/dbinfo")

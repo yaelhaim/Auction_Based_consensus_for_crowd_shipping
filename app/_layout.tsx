@@ -11,6 +11,7 @@ export default function Layout() {
       <Stack.Screen name="home" options={{ headerShown: false }} />
       <Stack.Screen name="wallet-login" options={{ title: "wallet-login" }} />
       <Stack.Screen name="profile-setup" options={{ title: "פרטים אישיים" }} />
+      <Stack.Screen name="role_select" options={{ title: "בחירת תפקיד" }} />
     </Stack>
   );
 }

@@ -1,6 +1,7 @@
 // app/wallet-login.tsx
-// Guided, RTL-first flow without debug prints.
-// (Only the "Steps" UI was modified to enforce RTL order.)
+// Wallet-based login flow (SubWallet + WalletConnect) with RTL-first UI.
+// Change: after verify, if profile is completed -> navigate to /role(select
+// instead of going straight to /home_page.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -45,13 +46,13 @@ type StepStatus = "done" | "current" | "upcoming";
 export default function WalletLogin() {
   const router = useRouter();
 
-  // Core state
+  // --- Core state ---
   const [session, setSession] = useState<WCSessionInfo | null>(null);
   const [serverAddress, setServerAddress] = useState<string | null>(null);
   const [nonce, setNonce] = useState("");
   const [messageToSign, setMessageToSign] = useState("");
 
-  // UI state
+  // --- UI state ---
   const [busy, setBusy] = useState<
     "idle" | "connecting" | "nonce" | "signing" | "verifying"
   >("idle");
@@ -64,7 +65,7 @@ export default function WalletLogin() {
 
   const nonceReady = !!nonce && !!messageToSign;
 
-  // Compute step statuses
+  // --- Step status (for UI only) ---
   const step1: StepStatus = !session ? "current" : "done";
   const step2: StepStatus = session
     ? nonceReady
@@ -73,6 +74,7 @@ export default function WalletLogin() {
     : "upcoming";
   const step3: StepStatus = nonceReady ? "current" : "upcoming";
 
+  // Request nonce from server for given address
   const requestNonce = useCallback(async (addressFromWallet: string) => {
     setBusy("nonce");
     setErr(null);
@@ -84,13 +86,14 @@ export default function WalletLogin() {
       setMessageToSign(message_to_sign);
       setServerAddress(wallet_address || addressFromWallet);
     } catch (e: any) {
-      setErr(e?.message || "יצירת Nonce נכשלה");
-      Alert.alert("שגיאה", String(e?.message || e));
+      setErr(e?.message || "Nonce creation failed");
+      Alert.alert("Error", String(e?.message || e));
     } finally {
       setBusy("idle");
     }
   }, []);
 
+  // Finalize after user approves the WC session inside SubWallet
   const finalizeAfterApproval = useCallback(async () => {
     if (finalizingRef.current) return;
     const p = approvalPromiseRef.current;
@@ -104,12 +107,13 @@ export default function WalletLogin() {
       setWcUri(null);
       await requestNonce(s.address);
     } catch (e: any) {
-      setErr(e?.message || "אישור הארנק נכשל");
+      setErr(e?.message || "Wallet approval failed");
     } finally {
       finalizingRef.current = false;
     }
   }, [requestNonce]);
 
+  // Bring user back from wallet -> app to finalize
   useEffect(() => {
     const onAppState = (st: AppStateStatus) => {
       if (st === "active") finalizeAfterApproval();
@@ -128,6 +132,7 @@ export default function WalletLogin() {
     return () => sub.remove();
   }, [finalizeAfterApproval]);
 
+  // Start WalletConnect pairing or re-use approved session
   const handleConnect = useCallback(async () => {
     setErr(null);
     setWcUri(null);
@@ -139,8 +144,10 @@ export default function WalletLogin() {
       setBusy("idle");
 
       if (res.type === "approved") {
+        // Already approved (e.g., relaunch)
         setSession(res.session);
       } else {
+        // Show QR + deep link to SubWallet
         setWcUri(res.uri);
         approvalPromiseRef.current = res.waitForApproval();
         openSubWalletOrStore(res.uri).catch(() => {});
@@ -148,13 +155,14 @@ export default function WalletLogin() {
       }
     } catch (e: any) {
       setBusy("idle");
-      setErr(e?.message || "החיבור נכשל");
+      setErr(e?.message || "Connection failed");
     }
   }, [finalizeAfterApproval]);
 
+  // Ask wallet to sign, then verify with server. Route based on profile state.
   const handleSignAndVerify = useCallback(async () => {
     if (!session?.topic || !session?.address || !messageToSign) {
-      setErr("חסר session או הודעה לחתימה.");
+      setErr("Missing session or message to sign.");
       return;
     }
     const addressForServer = serverAddress ?? session.address;
@@ -163,12 +171,14 @@ export default function WalletLogin() {
     try {
       setBusy("signing");
 
+      // Ask wallet to sign
       const signPromise = wcSignMessage(
         session.topic,
         session.address,
         messageToSign
       );
 
+      // Small nudges to bring the wallet to foreground in case it didn't pop
       const t1 = setTimeout(() => bringSubWalletToFront().catch(() => {}), 200);
       const t2 = setTimeout(
         () => bringSubWalletToFront().catch(() => {}),
@@ -179,6 +189,7 @@ export default function WalletLogin() {
       clearTimeout(t1);
       clearTimeout(t2);
 
+      // Verify on server -> get JWT
       setBusy("verifying");
       const { token } = await verifySignature({
         address: addressForServer,
@@ -188,6 +199,7 @@ export default function WalletLogin() {
 
       const tokenStr = String(token);
 
+      // Check if profile has been completed already
       let completed = false;
       try {
         const me = await getMyProfile(tokenStr);
@@ -204,9 +216,15 @@ export default function WalletLogin() {
 
       setBusy("idle");
 
+      // --- ROUTING CHANGE HERE ---
       if (completed) {
-        router.replace({ pathname: "/home_page", params: { token: tokenStr } });
+        // Go to role selection first (so user can choose Sender/Ride/Courier)
+        router.replace({
+          pathname: "/role_select",
+          params: { token: tokenStr },
+        });
       } else {
+        // New user -> go fill personal details
         router.replace({
           pathname: "/profile-setup",
           params: { token: tokenStr },
@@ -214,8 +232,8 @@ export default function WalletLogin() {
       }
     } catch (e: any) {
       setBusy("idle");
-      setErr(e?.message || "חתימה/אימות נכשלו");
-      Alert.alert("שגיאה", String(e?.message || e));
+      setErr(e?.message || "Sign/verify failed");
+      Alert.alert("Error", String(e?.message || e));
     }
   }, [session, messageToSign, serverAddress, router]);
 
@@ -231,7 +249,7 @@ export default function WalletLogin() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Steps header (RTL) */}
+        {/* Steps (RTL) */}
         <View style={styles.stepsCard}>
           <Text style={styles.stepsTitle}>צעדים</Text>
           <Step label="התחברות לארנק" index={1} status={step1} />
@@ -330,7 +348,7 @@ export default function WalletLogin() {
   );
 }
 
-/* --------------------------- Only the STEPS below were changed --------------------------- */
+/* --------------------------- Step component (RTL) --------------------------- */
 
 function Step({
   label,
@@ -345,10 +363,9 @@ function Step({
   const isCurrent = status === "current";
   const isUpcoming = status === "upcoming";
 
-  // RTL: DOT first, then LABEL. The row should be right-aligned via styles.stepRow.
+  // RTL layout: dot on the right, label to its left.
   return (
     <View style={styles.stepRow}>
-      {/* DOT (right-most) */}
       <View
         style={[
           styles.stepDot,
@@ -367,7 +384,6 @@ function Step({
         </Text>
       </View>
 
-      {/* LABEL (to the left of the dot) */}
       <Text
         style={[
           styles.stepLabel,
@@ -408,8 +424,8 @@ const styles = StyleSheet.create({
     textAlign: "left",
   },
   stepRow: {
-    flexDirection: "row", // normal order: [dot, label]
-    justifyContent: "flex-start", // push row content to the RIGHT edge
+    flexDirection: "row",
+    justifyContent: "flex-start",
     alignItems: "center",
     marginBottom: 8,
   },
@@ -420,7 +436,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10, // spacing between dot (right) and label (left)
+    marginRight: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },

@@ -1,6 +1,11 @@
 // app/lib/api.ts
-// Adds strong logging so we can see *exactly* what URL and body are used.
-// Exposes BASE_URL for showing on-screen in the login screen.
+// Unified API client for BidDrop (Expo).
+// - Strong logging for every request (method, URL, body, status).
+// - Typed responses for sender / courier / rider dashboards.
+// - Consistent auth headers via helper.
+// - Small, readable surface area.
+
+// --------------------------- Base URL & bootstrap ---------------------------
 
 import Constants from "expo-constants";
 
@@ -11,7 +16,6 @@ export const BASE_URL =
   "";
 
 if (!BASE_URL) {
-  // Important: this will show in Metro logs *and* throw so the UI knows
   console.log(
     "[API] Missing BASE_URL: set EXPO_PUBLIC_API_URL or EXPO_PUBLIC_POBA_API"
   );
@@ -22,6 +26,8 @@ if (!BASE_URL) {
 
 console.log("[API] BASE_URL →", BASE_URL);
 
+// ------------------------------- Common types -------------------------------
+
 export interface NonceResponse {
   wallet_address: string;
   nonce: string;
@@ -30,7 +36,7 @@ export interface NonceResponse {
 }
 
 export interface VerifyResponse {
-  token: string;
+  token: string; // normalized: prefer access_token/token
   is_new_user?: boolean;
   access_token?: string;
   token_type?: string;
@@ -59,6 +65,15 @@ export interface ProfileInput {
   phone: string;
   email: string;
   city: string;
+}
+
+/** Common list options (offset pagination). */
+export type ListOpts = { limit?: number; offset?: number };
+
+// ------------------------------ Fetch helpers ------------------------------
+
+function authHeaders(token?: string): HeadersInit {
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function fetchWithTimeout(
@@ -102,7 +117,7 @@ async function jsonFetch<T = any>(
   let data: any = null;
   try {
     data = await res.json();
-  } catch (e) {
+  } catch {
     try {
       const txt = await res.text();
       console.log("[API] non-JSON response:", txt.slice(0, 200));
@@ -120,6 +135,8 @@ async function jsonFetch<T = any>(
   }
   return data as T;
 }
+
+// --------------------------------- Auth ------------------------------------
 
 export async function getNonce(address: string): Promise<NonceResponse> {
   return jsonFetch(`${BASE_URL}/auth/nonce`, {
@@ -155,10 +172,12 @@ export async function verifySignature(params: {
   };
 }
 
+// --------------------------------- Users -----------------------------------
+
 /** Get the current user using the JWT (server resolves wallet via JWT 'sub'). */
 export async function getMyProfile(token: string): Promise<UserRow> {
   return jsonFetch<UserRow>(`${BASE_URL}/users/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { ...authHeaders(token) },
     timeoutMs: 10000,
   });
 }
@@ -168,18 +187,268 @@ export const getMe = getMyProfile;
 
 /** Upsert the current user's profile. */
 export async function upsertProfile(
-  input: {
-    token: string;
-  } & ProfileInput
+  input: { token: string } & ProfileInput
 ): Promise<UserRow> {
   const { token, ...payload } = input;
   return jsonFetch<UserRow>(`${BASE_URL}/users/me`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      ...authHeaders(token),
     },
     timeoutMs: 12000,
     body: JSON.stringify(payload),
   });
+}
+
+// --------------------------- Sender (package/ride) --------------------------
+
+/** A generic request created by a sender (package or passenger). */
+export type RequestRow = {
+  id: string;
+  owner_user_id: string;
+  type: "passenger" | "package";
+  from_address: string;
+  from_lat?: number | null;
+  from_lon?: number | null;
+  to_address: string;
+  to_lat?: number | null;
+  to_lon?: number | null;
+  passengers?: number | null; // default 1 for 'passenger'
+  notes?: string | null;
+  window_start?: string | null; // ISO string
+  window_end?: string | null; // ISO string
+  status: "open" | "assigned" | "in_transit" | "completed" | "cancelled";
+  created_at: string; // ISO
+  updated_at: string; // ISO
+};
+
+export type SenderMetrics = {
+  open_count: number;
+  active_count: number;
+  delivered_count: number;
+  cancelled_count?: number;
+};
+
+// UI buckets exposed by the API
+export type SenderBucket = "open" | "active" | "delivered";
+
+export async function getSenderMetrics(token: string): Promise<SenderMetrics> {
+  return jsonFetch<SenderMetrics>(`${BASE_URL}/sender/metrics`, {
+    headers: { ...authHeaders(token) },
+  });
+}
+
+export async function listSenderRequests(
+  token: string,
+  bucket: SenderBucket,
+  opts: ListOpts = {}
+): Promise<RequestRow[]> {
+  const q = new URLSearchParams({
+    status: bucket,
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  return jsonFetch<RequestRow[]>(
+    `${BASE_URL}/sender/requests?${q.toString()}`,
+    { headers: { ...authHeaders(token) } }
+  );
+}
+
+// ------------------------------ Courier (driver) ----------------------------
+
+/** Courier job row shown to drivers (may originate from sender requests). */
+export type CourierJobRow = {
+  id: string;
+  type: "package" | "passenger";
+  status: "open" | "assigned" | "in_transit" | "completed" | "cancelled";
+  from_address: string;
+  to_address: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  distance_km?: number | null;
+  suggested_pay?: string | number | null;
+  notes?: string | null;
+  created_at: string; // ISO
+};
+
+/** KPIs for courier dashboard. */
+export type CourierMetrics = {
+  available_count: number; // jobs you can pick
+  active_count: number; // currently delivering
+  delivered_count: number; // completed by you
+};
+
+/** Tabs for courier list. */
+export type CourierBucket = "available" | "active" | "delivered";
+
+/** GET KPIs for courier. */
+export async function getCourierMetrics(
+  token: string
+): Promise<CourierMetrics> {
+  return jsonFetch<CourierMetrics>(`${BASE_URL}/courier/metrics`, {
+    headers: { ...authHeaders(token) },
+  });
+}
+
+/** List courier jobs by bucket (server should filter by status/assignment). */
+export async function listCourierJobs(
+  token: string,
+  bucket: CourierBucket,
+  opts: ListOpts = {}
+): Promise<CourierJobRow[]> {
+  const q = new URLSearchParams({
+    status: bucket, // "available" | "active" | "delivered"
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  return jsonFetch<CourierJobRow[]>(
+    `${BASE_URL}/courier/jobs?${q.toString()}`,
+    { headers: { ...authHeaders(token) } }
+  );
+}
+
+/** Optional: actions for courier lifecycle (wire when screens are ready). */
+export async function courierAcceptJob(token: string, jobId: string) {
+  return jsonFetch<{ ok: true; job_id: string }>(
+    `${BASE_URL}/courier/jobs/${encodeURIComponent(jobId)}/accept`,
+    { method: "POST", headers: { ...authHeaders(token) } }
+  );
+}
+export async function courierStartJob(token: string, jobId: string) {
+  return jsonFetch<{ ok: true; job_id: string }>(
+    `${BASE_URL}/courier/jobs/${encodeURIComponent(jobId)}/start`,
+    { method: "POST", headers: { ...authHeaders(token) } }
+  );
+}
+export async function courierMarkDelivered(token: string, jobId: string) {
+  return jsonFetch<{ ok: true; job_id: string }>(
+    `${BASE_URL}/courier/jobs/${encodeURIComponent(jobId)}/delivered`,
+    { method: "POST", headers: { ...authHeaders(token) } }
+  );
+}
+
+// ------------------------------- Rider (rides) ------------------------------
+
+/** Rider requests (a rider looking to join a ride). */
+export type RiderRequestRow = {
+  id: string;
+  status: "open" | "matched" | "in_transit" | "completed" | "cancelled";
+  from_address: string;
+  to_address: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  seats?: number | null; // requested seats
+  notes?: string | null;
+  created_at: string; // ISO
+};
+
+export type RiderMetrics = {
+  open_count: number;
+  active_count: number;
+  completed_count: number;
+};
+
+/** Tabs for rider list. */
+export type RiderBucket = "open" | "active" | "completed";
+
+export async function getRiderMetrics(token: string): Promise<RiderMetrics> {
+  return jsonFetch<RiderMetrics>(`${BASE_URL}/rider/metrics`, {
+    headers: { ...authHeaders(token) },
+  });
+}
+
+export async function listRiderRequests(
+  token: string,
+  bucket: RiderBucket,
+  opts: ListOpts = {}
+): Promise<RiderRequestRow[]> {
+  const q = new URLSearchParams({
+    status: bucket, // "open" | "active" | "completed"
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  return jsonFetch<RiderRequestRow[]>(
+    `${BASE_URL}/rider/requests?${q.toString()}`,
+    { headers: { ...authHeaders(token) } }
+  );
+}
+
+/** Optional: rider actions (e.g., create/join/cancel) – wire when needed. */
+export async function riderCreateRequest(
+  token: string,
+  payload: {
+    from_address: string;
+    to_address: string;
+    window_start?: string | null;
+    window_end?: string | null;
+    seats?: number | null;
+    notes?: string | null;
+  }
+) {
+  return jsonFetch<RiderRequestRow>(`${BASE_URL}/rider/requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function riderCancelRequest(token: string, requestId: string) {
+  return jsonFetch<{ ok: true; id: string }>(
+    `${BASE_URL}/rider/requests/${encodeURIComponent(requestId)}/cancel`,
+    { method: "POST", headers: { ...authHeaders(token) } }
+  );
+}
+
+// --------------------------------- Utilities --------------------------------
+
+/** Optional tiny ping you can call from a health screen. */
+export async function pingApi(): Promise<{ ok: true }> {
+  // If you have /health or /health/db in FastAPI, adjust here.
+  await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 8000 }).catch(() => {
+    // Not all envs expose /health/db; fail silently to avoid breaking UI.
+  });
+  return { ok: true };
+}
+
+// ---------------------------- Create Request API -----------------------------
+
+export type CreateRequestInput = {
+  type: "package" | "passenger";
+  from_address: string;
+  to_address: string;
+  window_start: string; // ISO string
+  window_end: string; // ISO string
+  notes?: string;
+  max_price: number;
+  pickup_contact_name?: string | null;
+  pickup_contact_phone?: string | null;
+  from_lat?: number | null;
+  from_lon?: number | null;
+  to_lat?: number | null;
+  to_lon?: number | null;
+  passengers?: number | null;
+};
+
+export async function createSenderRequest(
+  token: string,
+  body: CreateRequestInput
+) {
+  const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/requests`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`, // assuming JWT
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || "Failed to create request");
+  }
+  return res.json() as Promise<{
+    id: string;
+    status: string;
+    created_at: string;
+  }>;
 }
