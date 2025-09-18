@@ -1,131 +1,139 @@
 # Backend/routes_requests.py
-# Create Request (Sender) endpoint using SQLAlchemy Core (no ORM).
-# Pydantic v2 compatible.
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Literal, Optional
+from datetime import datetime
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
-from typing import Optional, Literal
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from datetime import datetime, timezone
-import uuid
+# נסה לייבא את get_db מאיפה שקיים אצלך (יש פרויקט עם שתי מיקומים אפשריים)
+try:
+    from .Database.db import get_db
+except Exception:
+    from .Database.db import get_db  # fallback אם יש db.py בשורש Backend
 
-from .Database.db import get_db
-from .auth_dep import get_current_user  # make sure this exists in your project
+# ה־dependency שמחזיר את המשתמש הנוכחי
+from .auth_dep import get_current_user  # השאר כפי שקיים אצלך
 
-router = APIRouter(tags=["requests"])
+router = APIRouter(prefix="", tags=["requests"])
 
-# ---------- Schemas (Pydantic v2) ----------
+# ---------- Pydantic v2 input model ----------
 
 class RequestCreate(BaseModel):
-    # Use Literal instead of regex, works great with OpenAPI too
-    type: Literal["package", "passenger"]
+    model_config = ConfigDict(from_attributes=True)
 
-    from_address: str
-    to_address: str
+    type: Literal["package", "passenger"] = "package"
+    from_address: str = Field(..., min_length=3, max_length=255)
+    to_address: str = Field(..., min_length=3, max_length=255)
     window_start: datetime
     window_end: datetime
+
     notes: Optional[str] = None
+    max_price: Decimal = Field(..., gt=0)  # תואם DB NUMERIC(10,2)
+    pickup_contact_name: Optional[str] = Field(None, max_length=100)
+    pickup_contact_phone: Optional[str] = Field(None, max_length=32)
 
-    # New DB fields you added
-    max_price: float = Field(..., gt=0)
-    pickup_contact_name: Optional[str] = None
-    pickup_contact_phone: Optional[str] = None
-
-    # Optional geo
+    # אופציונלי – קואורדינטות/נוסעים
     from_lat: Optional[float] = None
     from_lon: Optional[float] = None
     to_lat: Optional[float] = None
     to_lon: Optional[float] = None
+    passengers: Optional[int] = None
 
-    # For ride requests (column already exists)
-    passengers: Optional[int] = Field(default=None, ge=1, le=8)
-
-    # Model-level validation (after all fields parsed)
-    @model_validator(mode="after")
-    def validate_request(self):
-        # window_end after window_start
-        if self.window_start and self.window_end and self.window_end <= self.window_start:
+    @field_validator("window_end")
+    @classmethod
+    def _validate_window(cls, v, info):
+        start = info.data.get("window_start")
+        if start and v <= start:
             raise ValueError("window_end must be after window_start")
+        return v
 
-        # If either pickup contact field provided — require both
-        if (self.pickup_contact_name and not self.pickup_contact_phone) or (
-            self.pickup_contact_phone and not self.pickup_contact_name
-        ):
-            raise ValueError("If pickup contact is provided, both name and phone are required")
+# ---------- Helper ----------
 
-        return self
-
-
-class RequestOut(BaseModel):
-    id: uuid.UUID
-    status: str
-    created_at: datetime
-
+def _user_id(u) -> str:
+    """תומך גם במילון וגם באובייקט."""
+    if hasattr(u, "id"):
+        return getattr(u, "id")
+    if isinstance(u, dict):
+        return u.get("id") or u.get("user_id")
+    return None
 
 # ---------- Routes ----------
 
-@router.post("/requests", response_model=RequestOut)
-def create_request(
+@router.post("/requests", status_code=status.HTTP_201_CREATED)
+async def create_request(
     payload: RequestCreate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),  # user must expose .id, .first_name, .phone (optional)
+    db = Depends(get_db),
+    current_user = Depends(get_current_user),
 ):
-    now = datetime.now(timezone.utc)
-    req_id = uuid.uuid4()
+    uid = _user_id(current_user)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Unauthorized (no user id)")
 
-    # Default pickup contact to owner if none provided
-    pickup_name = payload.pickup_contact_name or getattr(user, "first_name", None)
-    pickup_phone = payload.pickup_contact_phone or getattr(user, "phone", None)
+    # בניית הפרמטרים לשאילתא
+    params = {
+        "owner_user_id": uid,
+        "type": payload.type,
+        "from_address": payload.from_address,
+        "from_lat": payload.from_lat,
+        "from_lon": payload.from_lon,
+        "to_address": payload.to_address,
+        "to_lat": payload.to_lat,
+        "to_lon": payload.to_lon,
+        "passengers": payload.passengers,
+        "notes": payload.notes,
+        "window_start": payload.window_start,
+        "window_end": payload.window_end,
+        "status": "open",
+        "max_price": str(payload.max_price),  # ל-psycopg נוח כטקסט
+        "pickup_contact_name": payload.pickup_contact_name,
+        "pickup_contact_phone": payload.pickup_contact_phone,
+    }
 
-    try:
-        q = text(
-            """
-            INSERT INTO requests (
-              id, owner_user_id, type,
-              from_address, from_lat, from_lon,
-              to_address, to_lat, to_lon,
-              passengers, notes,
-              window_start, window_end,
-              status, created_at, updated_at,
-              max_price, pickup_contact_name, pickup_contact_phone
-            ) VALUES (
-              :id, :owner_user_id, :type,
-              :from_address, :from_lat, :from_lon,
-              :to_address, :to_lat, :to_lon,
-              :passengers, :notes,
-              :window_start, :window_end,
-              'open', :created_at, :updated_at,
-              :max_price, :pickup_contact_name, :pickup_contact_phone
-            )
-            RETURNING id, status, created_at
-            """
+    # SQLAlchemy Core – text(). אם יש לך helper אחר, אפשר להתאים.
+    from sqlalchemy import text
+
+    sql = text("""
+        INSERT INTO requests (
+            owner_user_id, type,
+            from_address, from_lat, from_lon,
+            to_address, to_lat, to_lon,
+            passengers, notes,
+            window_start, window_end, status,
+            max_price, pickup_contact_name, pickup_contact_phone
+        ) VALUES (
+            :owner_user_id, :type,
+            :from_address, :from_lat, :from_lon,
+            :to_address, :to_lat, :to_lon,
+            :passengers, :notes,
+            :window_start, :window_end, :status,
+            :max_price, :pickup_contact_name, :pickup_contact_phone
         )
-        row = db.execute(
-            q,
-            {
-                "id": str(req_id),
-                "owner_user_id": str(user.id),
-                "type": payload.type,
-                "from_address": payload.from_address,
-                "from_lat": payload.from_lat,
-                "from_lon": payload.from_lon,
-                "to_address": payload.to_address,
-                "to_lat": payload.to_lat,
-                "to_lon": payload.to_lon,
-                "passengers": payload.passengers if payload.type == "passenger" else None,
-                "notes": payload.notes,
-                "window_start": payload.window_start,
-                "window_end": payload.window_end,
-                "created_at": now,
-                "updated_at": now,
-                "max_price": payload.max_price,
-                "pickup_contact_name": pickup_name,
-                "pickup_contact_phone": pickup_phone,
-            },
-        ).mappings().first()
-        db.commit()
-        return RequestOut(**row)
+        RETURNING id, status, created_at
+    """)
+
+    # תמיכה גם ב-async וגם ב-sync session לפי מה שיש אצלך ב-get_db
+    try:
+        if hasattr(db, "execute"):  # sync/engine.connect()
+            result = db.execute(sql, params)
+            row = result.mappings().first()
+            if hasattr(db, "commit"):
+                db.commit()
+        else:
+            # הנחה: get_db מחזיר AsyncSession
+            res = await db.execute(sql, params)
+            row = res.mappings().first()
+            await db.commit()
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Failed to create request: {e}")
+        # לוג נוח לבדיקה
+        print("[/requests] insert error:", repr(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Insert failed (no row)")
+
+    return {"id": str(row["id"]), "status": row["status"], "created_at": row["created_at"]}
+
+# בריאות שרת (נוח לבדיקה מהלקוח)
+@router.get("/healthz")
+def healthz():
+    return {"ok": True}

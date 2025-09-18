@@ -1,11 +1,12 @@
 // Modern "Create Request (Sender)" screen
-// - Stepbar
-// - Cards with elevation
-// - Date/Time pickers (react-native-modal-datetime-picker)
+// - Soft-mocha cards
+// - One bottom-sheet modal with calendar + time (JS-only)
+// - Selected day highlight (styles + useDefaultStyles)
+// - Default: pickupBy = "other" (requires name+phone), can switch to "me"
 // - Loading state on publish
-// - Full RTL friendly
+// - RTL-friendly
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -17,19 +18,20 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import DateTimePickerModal from "react-native-modal-datetime-picker";
+import Modal from "react-native-modal";
+import UIDatePicker, { useDefaultStyles } from "react-native-ui-datepicker";
+import dayjs from "dayjs";
+import "dayjs/locale/he";
+
 import { Header } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 import { createSenderRequest, type CreateRequestInput } from "../lib/api";
 
+dayjs.locale("he");
+
 function fmt(dt?: Date | null) {
   if (!dt) return "";
-  const dd = String(dt.getDate()).padStart(2, "0");
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const yyyy = dt.getFullYear();
-  const hh = String(dt.getHours()).padStart(2, "0");
-  const min = String(dt.getMinutes()).padStart(2, "0");
-  return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+  return dayjs(dt).format("DD.MM.YYYY HH:mm");
 }
 
 export default function SenderRequestCreate() {
@@ -44,15 +46,15 @@ export default function SenderRequestCreate() {
   const [notes, setNotes] = useState("");
   const [maxPrice, setMaxPrice] = useState<string>("");
 
-  const [useOtherPickup, setUseOtherPickup] = useState(false);
+  // Who picks up? default: "other" (forces details)
+  const [pickupBy, setPickupBy] = useState<"me" | "other">("other");
   const [pickupName, setPickupName] = useState("");
   const [pickupPhone, setPickupPhone] = useState("");
 
-  // Picker modal state
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerTarget, setPickerTarget] = useState<"start" | "end">("start");
-  const [pickerPhase, setPickerPhase] = useState<"date" | "time">("date");
-  const [tempDate, setTempDate] = useState<Date>(new Date());
+  // One modal (calendar + time) for start/end
+  const [dtModalOpen, setDtModalOpen] = useState(false);
+  const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
+  const [tempDT, setTempDT] = useState<Date>(new Date());
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -62,41 +64,19 @@ export default function SenderRequestCreate() {
     !!startDT &&
     !!endDT &&
     Number(maxPrice) > 0 &&
-    (!useOtherPickup ||
+    (pickupBy === "me" ||
       (pickupName.trim().length > 0 && pickupPhone.trim().length > 0));
 
-  // Open picker (date then time)
-  function openPicker(target: "start" | "end") {
-    setPickerTarget(target);
-    setPickerPhase("date");
-    setTempDate(
-      target === "start" ? startDT || new Date() : endDT || new Date()
-    );
-    setPickerVisible(true);
+  function openDT(target: "start" | "end") {
+    setDtTarget(target);
+    setTempDT((target === "start" ? startDT : endDT) || new Date());
+    setDtModalOpen(true);
   }
 
-  function onConfirmPicker(dt: Date) {
-    if (pickerPhase === "date") {
-      // Save picked date, continue to time
-      const next = new Date(dt);
-      const base =
-        pickerTarget === "start" ? startDT || new Date() : endDT || new Date();
-      next.setHours(base.getHours(), base.getMinutes(), 0, 0);
-      setTempDate(next);
-      setPickerPhase("time");
-      return;
-    }
-    // phase === 'time' -> finalize
-    const picked = new Date(tempDate);
-    picked.setHours(dt.getHours(), dt.getMinutes(), 0, 0);
-    if (pickerTarget === "start") setStartDT(picked);
-    else setEndDT(picked);
-    setPickerVisible(false);
-  }
-
-  function onCancelPicker() {
-    // Cancel entirely (if on time phase, just close)
-    setPickerVisible(false);
+  function confirmDT() {
+    if (dtTarget === "start") setStartDT(new Date(tempDT));
+    else setEndDT(new Date(tempDT));
+    setDtModalOpen(false);
   }
 
   async function submit() {
@@ -118,8 +98,10 @@ export default function SenderRequestCreate() {
         window_end: endDT!.toISOString(),
         notes: notes.trim() || undefined,
         max_price: Number(maxPrice),
-        pickup_contact_name: useOtherPickup ? pickupName.trim() : undefined,
-        pickup_contact_phone: useOtherPickup ? pickupPhone.trim() : undefined,
+        pickup_contact_name:
+          pickupBy === "other" ? pickupName.trim() : undefined,
+        pickup_contact_phone:
+          pickupBy === "other" ? pickupPhone.trim() : undefined,
       };
       await createSenderRequest(String(token), payload);
       Alert.alert("בוצע", "הבקשה נשמרה ופורסמה בהצלחה");
@@ -131,10 +113,21 @@ export default function SenderRequestCreate() {
     }
   }
 
-  // Stepbar: step 1 complete when addresses filled, step 2 when dates set, step 3 when price set
-  const step1Done = fromAddress.trim() && toAddress.trim();
-  const step2Done = !!startDT && !!endDT;
+  // Step completion
+  const step1Done = !!(fromAddress.trim() && toAddress.trim());
+  const step2Done = !!(startDT && endDT);
   const step3Done = Number(maxPrice) > 0;
+
+  // DatePicker styles — selected day feedback immediately on tap
+  const dpBase = useDefaultStyles();
+  const dpStyles = {
+    ...dpBase,
+    // highlight selected day background + label
+    selected: { backgroundColor: COLORS.primary, borderRadius: 8 },
+    selected_label: { color: "#fff", fontWeight: "900" },
+    // emphasize "today"
+    today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
+  } as const;
 
   return (
     <View style={S.screen}>
@@ -146,9 +139,9 @@ export default function SenderRequestCreate() {
       {/* Stepbar */}
       <View style={S.stepbar}>
         {[
-          { label: "פרטים", done: !!step1Done },
-          { label: "זמנים", done: !!step2Done },
-          { label: "אישור", done: !!step3Done },
+          { label: "פרטים", done: step1Done },
+          { label: "זמנים", done: step2Done },
+          { label: "אישור", done: step3Done },
         ].map((s, i) => (
           <View style={S.stepItem} key={s.label}>
             <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
@@ -196,14 +189,14 @@ export default function SenderRequestCreate() {
           </View>
         </View>
 
-        {/* Windows */}
+        {/* Window */}
         <View style={S.card}>
           <Text style={S.cardTitle}>חלון זמן</Text>
 
           <View style={S.row2}>
             <TouchableOpacity
               style={S.pickerBtn}
-              onPress={() => openPicker("start")}
+              onPress={() => openDT("start")}
             >
               <Text style={S.pickerLabel}>התחלה *</Text>
               <Text style={S.pickerValue}>
@@ -211,10 +204,7 @@ export default function SenderRequestCreate() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={S.pickerBtn}
-              onPress={() => openPicker("end")}
-            >
+            <TouchableOpacity style={S.pickerBtn} onPress={() => openDT("end")}>
               <Text style={S.pickerLabel}>סיום *</Text>
               <Text style={S.pickerValue}>
                 {endDT ? fmt(endDT) : "בחרי תאריך ושעה"}
@@ -241,27 +231,32 @@ export default function SenderRequestCreate() {
           </View>
         </View>
 
-        {/* Pickup contact */}
+        {/* Pickup contact — default: OTHER (required) */}
         <View style={S.card}>
-          <Text style={S.cardTitle}>איש קשר באיסוף</Text>
+          <Text style={S.cardTitle}>מי אוסף את החבילה?</Text>
 
-          <TouchableOpacity
-            onPress={() => setUseOtherPickup((v) => !v)}
-            style={S.toggle}
-            activeOpacity={0.8}
-          >
-            <View style={[S.checkbox, useOtherPickup && S.checkboxOn]} />
-            <Text style={S.toggleTxt}>
-              {useOtherPickup
-                ? "אדם אחר מוסר את החבילה"
-                : "אני מוסרת/מוסר את החבילה"}
-            </Text>
-          </TouchableOpacity>
+          {/* Segmented switch */}
+          <View style={S.segment}>
+            {(["me", "other"] as const).map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                onPress={() => setPickupBy(opt)}
+                style={[S.segmentBtn, pickupBy === opt && S.segmentBtnActive]}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[S.segmentTxt, pickupBy === opt && S.segmentTxtActive]}
+                >
+                  {opt === "me" ? "אני" : "אדם אחר"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-          {useOtherPickup && (
+          {pickupBy === "other" ? (
             <>
               <View style={S.field}>
-                <Text style={S.label}>שם *</Text>
+                <Text style={S.label}>שם מוסר/ת *</Text>
                 <TextInput
                   style={S.input}
                   placeholder="לדוגמה: דנה כהן"
@@ -271,7 +266,7 @@ export default function SenderRequestCreate() {
                 />
               </View>
               <View style={S.field}>
-                <Text style={S.label}>נייד *</Text>
+                <Text style={S.label}>נייד מוסר/ת *</Text>
                 <TextInput
                   style={S.input}
                   placeholder="050-1234567"
@@ -282,6 +277,8 @@ export default function SenderRequestCreate() {
                 />
               </View>
             </>
+          ) : (
+            <Text style={S.hint}>נשתמש בשם והטלפון שלך כברירת מחדל.</Text>
           )}
         </View>
 
@@ -319,17 +316,47 @@ export default function SenderRequestCreate() {
         )}
       </TouchableOpacity>
 
-      {/* Date/Time picker modal */}
-      <DateTimePickerModal
-        isVisible={pickerVisible}
-        mode={pickerPhase === "date" ? "date" : "time"}
-        date={tempDate}
-        onConfirm={onConfirmPicker}
-        onCancel={onCancelPicker}
-        locale="he-IL"
-        confirmTextIOS={pickerPhase === "date" ? "בחירת שעה" : "אישור"}
-        cancelTextIOS="ביטול"
-      />
+      {/* Bottom sheet: calendar + time together */}
+      <Modal
+        isVisible={dtModalOpen}
+        onBackdropPress={() => setDtModalOpen(false)}
+        onBackButtonPress={() => setDtModalOpen(false)}
+        style={{ justifyContent: "flex-end", margin: 0 }}
+      >
+        <View style={S.modalSheet}>
+          <Text style={S.modalTitle}>
+            {dtTarget === "start"
+              ? "בחרי תאריך ושעה - התחלה"
+              : "בחרי תאריך ושעה - סיום"}
+          </Text>
+
+          <UIDatePicker
+            mode="single"
+            date={tempDT}
+            onChange={(p: any) => p?.date && setTempDT(p.date)}
+            timePicker
+            locale="he"
+            firstDayOfWeek={0} // Sunday
+            navigationPosition="around" // arrows on both sides (fits RTL)
+            styles={dpStyles}
+          />
+
+          <View style={S.modalRow}>
+            <TouchableOpacity
+              style={[S.modalBtn, S.modalCancel]}
+              onPress={() => setDtModalOpen(false)}
+            >
+              <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.modalBtn, S.modalConfirm]}
+              onPress={confirmDT}
+            >
+              <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -337,13 +364,13 @@ export default function SenderRequestCreate() {
 const S = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
 
-  // Stepbar
+  // Stepbar (RTL)
   stepbar: {
-    flexDirection: "row-reverse",
+    flexDirection: "row",
     alignItems: "center",
     marginBottom: 12,
   },
-  stepItem: { flexDirection: "row-reverse", alignItems: "center", flex: 1 },
+  stepItem: { flexDirection: "row", alignItems: "center", flex: 1 },
   stepCircle: {
     width: 28,
     height: 28,
@@ -367,31 +394,30 @@ const S = StyleSheet.create({
   },
   stepDividerDone: { backgroundColor: COLORS.primary },
 
-  // Cards
+  // Cards — soft mocha
   card: {
-    backgroundColor: COLORS.card,
+    backgroundColor: COLORS.softMocha,
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-    // subtle shadow
+    borderColor: "#E7D8CF",
     shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
   cardTitle: {
     fontWeight: "900",
     color: COLORS.primaryDark,
     marginBottom: 8,
-    textAlign: "right",
+    textAlign: "left",
   },
 
   // Fields
   field: { marginBottom: 10 },
-  label: { fontWeight: "800", color: COLORS.text, textAlign: "right" },
+  label: { fontWeight: "800", color: COLORS.text, textAlign: "left" },
   input: {
     marginTop: 6,
     backgroundColor: "#fff",
@@ -402,7 +428,7 @@ const S = StyleSheet.create({
     paddingHorizontal: 12,
     color: COLORS.text,
   },
-  hint: { marginTop: 6, color: COLORS.dim, textAlign: "right" },
+  hint: { marginTop: 6, color: COLORS.dim, textAlign: "left" },
 
   // Pickers
   row2: { flexDirection: "row-reverse", gap: 10 },
@@ -415,7 +441,7 @@ const S = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
   },
-  pickerLabel: { color: COLORS.dim, fontWeight: "700", textAlign: "right" },
+  pickerLabel: { color: COLORS.dim, fontWeight: "700", textAlign: "left" },
   pickerValue: {
     marginTop: 4,
     fontWeight: "900",
@@ -423,22 +449,20 @@ const S = StyleSheet.create({
     textAlign: "right",
   },
 
-  // Toggle
-  toggle: {
+  // Segment switch
+  segment: {
     flexDirection: "row-reverse",
-    alignItems: "center",
-    marginBottom: 6,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    overflow: "hidden",
+    marginBottom: 10,
   },
-  toggleTxt: { marginRight: 8, color: COLORS.text, fontWeight: "700" },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-    backgroundColor: "transparent",
-  },
-  checkboxOn: { backgroundColor: COLORS.primary },
+  segmentBtn: { flex: 1, paddingVertical: 10, alignItems: "center" },
+  segmentBtnActive: { backgroundColor: COLORS.primary },
+  segmentTxt: { color: COLORS.primaryDark, fontWeight: "800" },
+  segmentTxtActive: { color: "#fff" },
 
   // Bottom CTA
   bottomBar: {
@@ -451,4 +475,31 @@ const S = StyleSheet.create({
     alignItems: "center",
   },
   bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+
+  // Modal sheet
+  modalSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 16,
+  },
+  modalTitle: {
+    fontWeight: "900",
+    fontSize: 16,
+    textAlign: "center",
+    color: COLORS.primaryDark,
+    marginBottom: 8,
+  },
+  modalRow: { flexDirection: "row", gap: 12, marginTop: 8 },
+  modalBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  modalCancel: { backgroundColor: "#F3F3F3" },
+  modalConfirm: { backgroundColor: COLORS.primary },
+  modalBtnTxt: { fontWeight: "900" },
+  modalCancelTxt: { color: COLORS.text },
+  modalConfirmTxt: { color: "#fff" },
 });

@@ -1,13 +1,13 @@
 // app/lib/api.ts
 // Unified API client for BidDrop (Expo).
-// - Strong logging for every request (method, URL, body, status).
-// - Typed responses for sender / courier / rider dashboards.
-// - Consistent auth headers via helper.
-// - Small, readable surface area.
-
-// --------------------------- Base URL & bootstrap ---------------------------
+// - One BASE_URL for all calls
+// - Strong logging (method, URL, body, status)
+// - Timeouts + better error messages
+// - Types aligned with DB (requests incl. max_price & pickup_contact_*)
 
 import Constants from "expo-constants";
+
+// --------------------------- Base URL & bootstrap ---------------------------
 
 export const BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ??
@@ -174,7 +174,7 @@ export async function verifySignature(params: {
 
 // --------------------------------- Users -----------------------------------
 
-/** Get the current user using the JWT (server resolves wallet via JWT 'sub'). */
+/** Get the current user using the JWT. */
 export async function getMyProfile(token: string): Promise<UserRow> {
   return jsonFetch<UserRow>(`${BASE_URL}/users/me`, {
     headers: { ...authHeaders(token) },
@@ -221,6 +221,11 @@ export type RequestRow = {
   status: "open" | "assigned" | "in_transit" | "completed" | "cancelled";
   created_at: string; // ISO
   updated_at: string; // ISO
+
+  // ★ New columns added to DB:
+  max_price: number; // NUMERIC(10,2) → number in JSON
+  pickup_contact_name?: string | null; // VARCHAR(100)
+  pickup_contact_phone?: string | null; // VARCHAR(32)
 };
 
 export type SenderMetrics = {
@@ -404,10 +409,14 @@ export async function riderCancelRequest(token: string, requestId: string) {
 
 /** Optional tiny ping you can call from a health screen. */
 export async function pingApi(): Promise<{ ok: true }> {
-  // If you have /health or /health/db in FastAPI, adjust here.
-  await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 8000 }).catch(() => {
-    // Not all envs expose /health/db; fail silently to avoid breaking UI.
-  });
+  // Try /healthz first, fallback to /health/db if exists
+  try {
+    await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
+  } catch {
+    try {
+      await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 6000 });
+    } catch {}
+  }
   return { ok: true };
 }
 
@@ -430,25 +439,23 @@ export type CreateRequestInput = {
   passengers?: number | null;
 };
 
+export type CreateRequestResponse = {
+  id: string;
+  status: string;
+  created_at: string; // ISO
+};
+
 export async function createSenderRequest(
   token: string,
   body: CreateRequestInput
-) {
-  const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/requests`, {
+): Promise<CreateRequestResponse> {
+  return jsonFetch<CreateRequestResponse>(`${BASE_URL}/requests`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`, // assuming JWT
+      ...authHeaders(token),
     },
+    timeoutMs: 12000,
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(txt || "Failed to create request");
-  }
-  return res.json() as Promise<{
-    id: string;
-    status: string;
-    created_at: string;
-  }>;
 }
