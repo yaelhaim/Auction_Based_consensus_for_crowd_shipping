@@ -333,6 +333,67 @@ export async function courierMarkDelivered(token: string, jobId: string) {
   );
 }
 
+export async function createCourierOffer(
+  token: string,
+  body: {
+    from_address: string;
+    to_address?: string | null; // null = כל היעדים
+    window_start: string; // ISO
+    window_end: string; // ISO
+    min_price: number;
+    types: ("package" | "passenger")[];
+    notes?: string | null;
+  }
+) {
+  return jsonFetch<{ id: string; status: string; created_at: string }>(
+    `${BASE_URL}/courier/offers`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      timeoutMs: 12000,
+    }
+  );
+}
+
+// ---------------------------- Courier Offers (driver availability) ----------------------------
+
+export type CourierOfferRow = {
+  id: string;
+  driver_user_id?: string;
+  from_address: string;
+  to_address?: string | null;
+  window_start?: string | null; // ISO
+  window_end?: string | null; // ISO
+  min_price: string; // מגיע כטקסט מה-API (NUMERIC), תרצי -> parseFloat
+  types: ("package" | "passenger")[];
+  notes?: string | null;
+  status: "active" | "paused" | "completed" | "cancelled";
+  created_at: string; // ISO
+  updated_at: string; // ISO
+};
+
+export async function listMyCourierOffers(
+  token: string,
+  opts: { status?: string; limit?: number; offset?: number } = {}
+): Promise<CourierOfferRow[]> {
+  const q = new URLSearchParams({
+    ...(opts.status ? { status: opts.status } : {}),
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  return jsonFetch<CourierOfferRow[]>(
+    `${BASE_URL}/courier/offers?${q.toString()}`,
+    {
+      headers: { ...authHeaders(token) },
+      timeoutMs: 12000,
+    }
+  );
+}
+
 // ------------------------------- Rider (rides) ------------------------------
 
 /** Rider requests (a rider looking to join a ride). */

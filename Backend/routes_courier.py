@@ -1,20 +1,23 @@
+# routes_courier.py
 # FastAPI routes for "Courier" (driver) dashboard using SQL text().
 # Endpoints:
 #   GET  /courier/metrics
-#   GET  /courier/jobs?status=available|active|delivered&limit=50&offset=0
+#   GET  /courier/jobs?status=available|active|delivered&limit=50&offset=0[&respect_offers=true]
 #   POST /courier/jobs/{job_id}/accept
 #   POST /courier/jobs/{job_id}/start
 #   POST /courier/jobs/{job_id}/delivered
 #
-# Business rules:
-# - available: requests.status='open' AND no assignment exists AND request not owned by me
-# - active:    my assignments with status IN ('created','picked_up','in_transit')
-# - delivered: my assignments with status='completed'
+# Added:
+#   POST /courier/offers
+#   GET  /courier/offers?status=active|paused|completed|cancelled&limit=50&offset=0
 
 from fastapi import APIRouter, Depends, Query, HTTPException
-from typing import Literal
+from typing import Literal, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from datetime import datetime
+from decimal import Decimal
 
 from .Database.db import get_db
 from .auth_dep import get_current_user
@@ -31,7 +34,6 @@ def courier_metrics(
     db: Session = Depends(get_db),
     me = Depends(get_current_user),
 ):
-    # available
     q_available = text("""
         SELECT COUNT(*) AS c
         FROM requests r
@@ -44,7 +46,6 @@ def courier_metrics(
     """)
     available = db.execute(q_available, {"uid": me["id"]}).scalar() or 0
 
-    # active (explicit IN, no ANY)
     q_active = text("""
         SELECT COUNT(*) AS c
         FROM assignments a
@@ -54,7 +55,6 @@ def courier_metrics(
     """)
     active = db.execute(q_active, {"uid": me["id"]}).scalar() or 0
 
-    # delivered
     q_delivered = text("""
         SELECT COUNT(*) AS c
         FROM assignments a
@@ -70,35 +70,66 @@ def courier_metrics(
         "delivered_count": int(delivered),
     }
 
-# ------------------------------- List ---------------------------------------
+# ------------------------------- Jobs List ----------------------------------
 
 @router.get("/jobs")
 def courier_jobs(
     status: Literal["available","active","delivered"] = Query("available"),
+    respect_offers: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     me = Depends(get_current_user),
 ):
     if status == "available":
-        q = text("""
-            SELECT
-              r.id::text AS id,
-              r.type::text AS type,
-              r.status::text AS status,
-              r.from_address,
-              r.to_address,
-              r.window_start,
-              r.window_end,
-              r.notes,
-              r.created_at
-            FROM requests r
-            WHERE r.status = 'open'
-              AND r.owner_user_id <> :uid
-              AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.request_id = r.id)
-            ORDER BY r.created_at DESC
-            LIMIT :limit OFFSET :offset
-        """)
+        if respect_offers:
+            q = text("""
+                SELECT
+                  r.id::text AS id,
+                  r.type::text AS type,
+                  r.status::text AS status,
+                  r.from_address,
+                  r.to_address,
+                  r.window_start,
+                  r.window_end,
+                  r.notes,
+                  r.created_at
+                FROM requests r
+                WHERE r.status = 'open'
+                  AND r.owner_user_id <> :uid
+                  AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.request_id = r.id)
+                  AND EXISTS (
+                    SELECT 1
+                    FROM courier_offers o
+                    WHERE o.driver_user_id = :uid
+                      AND o.status = 'active'
+                      AND r.window_start < o.window_end
+                      AND r.window_end > o.window_start
+                      AND (o.to_address IS NULL OR o.to_address = r.to_address)
+                      AND r.type = ANY (o.types)
+                  )
+                ORDER BY r.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+        else:
+            q = text("""
+                SELECT
+                  r.id::text AS id,
+                  r.type::text AS type,
+                  r.status::text AS status,
+                  r.from_address,
+                  r.to_address,
+                  r.window_start,
+                  r.window_end,
+                  r.notes,
+                  r.created_at
+                FROM requests r
+                WHERE r.status = 'open'
+                  AND r.owner_user_id <> :uid
+                  AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.request_id = r.id)
+                ORDER BY r.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
         params = {"uid": me["id"], "limit": limit, "offset": offset}
 
     elif status == "active":
@@ -145,7 +176,6 @@ def courier_jobs(
 
     rows = db.execute(q, params).mappings().all()
 
-    # distance_km / suggested_pay not in your schema yet -> return None
     return [
         {
             "id": r["id"],
@@ -163,7 +193,7 @@ def courier_jobs(
         for r in rows
     ]
 
-# ------------------------------ Actions -------------------------------------
+# ------------------------------ Job Actions ---------------------------------
 
 @router.post("/jobs/{job_id}/accept")
 def courier_accept_job(
@@ -171,7 +201,6 @@ def courier_accept_job(
     db: Session = Depends(get_db),
     me = Depends(get_current_user),
 ):
-    # Ensure the request exists, open, not mine, no assignment yet
     chk = text("""
         SELECT r.id
         FROM requests r
@@ -185,7 +214,6 @@ def courier_accept_job(
     if not ok:
         raise HTTPException(status_code=409, detail="Request not available")
 
-    # Create assignment
     ins = text("""
         INSERT INTO assignments (
           id, request_id, driver_user_id, assigned_at, status, created_at, updated_at
@@ -196,7 +224,6 @@ def courier_accept_job(
     """)
     arow = db.execute(ins, {"rid": job_id, "uid": me["id"]}).mappings().first()
 
-    # Move request to 'assigned'
     upd = text("""
         UPDATE requests
         SET status = 'assigned', updated_at = NOW()
@@ -278,3 +305,103 @@ def courier_delivered_job(
 
     db.commit()
     return {"ok": True, "job_id": job_id}
+
+# --------------------------- Courier Offers (NEW) ---------------------------
+
+class OfferCreate(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    from_address: str = Field(..., min_length=3, max_length=255)
+    to_address: Optional[str] = Field(None, max_length=255)  # None = כל יעד
+    window_start: datetime
+    window_end: datetime
+    min_price: Decimal = Field(..., gt=0)
+    types: List[str] = Field(default_factory=lambda: ["package"])  # ['package','passenger']
+    notes: Optional[str] = None
+
+    @field_validator("window_end")
+    @classmethod
+    def _win_ok(cls, v, info):
+        s = info.data.get("window_start")
+        if s and v <= s:
+            raise ValueError("window_end must be after window_start")
+        return v
+
+@router.post("/offers", status_code=201)
+def create_courier_offer(
+    payload: OfferCreate,
+    db: Session = Depends(get_db),
+    me = Depends(get_current_user),
+):
+    sql = text("""
+        INSERT INTO courier_offers (
+          driver_user_id,
+          from_address, to_address,
+          window_start, window_end,
+          min_price, types, notes, status
+        ) VALUES (
+          :uid,
+          :from_address, :to_address,
+          :window_start, :window_end,
+          :min_price, :types, :notes, 'active'
+        )
+        RETURNING id::text AS id, status::text AS status, created_at
+    """)
+    row = db.execute(sql, {
+        "uid": me["id"],
+        "from_address": payload.from_address,
+        "to_address": payload.to_address,
+        "window_start": payload.window_start,
+        "window_end": payload.window_end,
+        "min_price": str(payload.min_price),
+        "types": payload.types,
+        "notes": payload.notes,
+    }).mappings().first()
+    db.commit()
+    return {"id": row["id"], "status": row["status"], "created_at": _iso(row["created_at"])}
+
+@router.get("/offers")
+def list_my_offers(
+    status: Optional[str] = Query(None),  # active | paused | completed | cancelled
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    me = Depends(get_current_user),
+):
+    base = """
+        SELECT
+          id::text AS id,
+          driver_user_id::text AS driver_user_id,
+          from_address, to_address,
+          window_start, window_end,
+          min_price::text AS min_price,
+          types, notes, status,
+          created_at, updated_at
+        FROM courier_offers
+        WHERE driver_user_id = :uid
+    """
+    if status:
+        base += " AND status = :status"
+    base += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+
+    params = {"uid": me["id"], "limit": limit, "offset": offset}
+    if status:
+        params["status"] = status
+
+    rows = db.execute(text(base), params).mappings().all()
+    return [
+        {
+            "id": r["id"],
+            "from_address": r["from_address"],
+            "to_address": r["to_address"],
+            "window_start": _iso(r["window_start"]),
+            "window_end": _iso(r["window_end"]),
+            "min_price": r["min_price"],
+            "types": r["types"],
+            "notes": r["notes"],
+            "status": r["status"],
+            "created_at": _iso(r["created_at"]),
+            "updated_at": _iso(r["updated_at"]),
+        }
+        for r in rows
+    ]

@@ -8,26 +8,94 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   getMyProfile,
   getCourierMetrics,
   listCourierJobs,
+  listMyCourierOffers,
   type CourierMetrics,
   type CourierJobRow,
   type CourierBucket,
+  type CourierOfferRow,
 } from "../lib/api";
-import { Header, Chip, KPI, HeroCard, ListCard } from "./components/Primitives";
+import {
+  Header,
+  KPI,
+  HeroCard,
+  RewardBanner,
+  ListCard,
+} from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 
 export default function CourierHome() {
+  const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
+
   const [name, setName] = useState("");
   const [tab, setTab] = useState<CourierBucket>("available");
-  const [items, setItems] = useState<CourierJobRow[]>([]);
+
+  const [jobs, setJobs] = useState<CourierJobRow[]>([]);
+  const [offers, setOffers] = useState<CourierOfferRow[]>([]);
   const [metrics, setMetrics] = useState<CourierMetrics | null>(null);
+
+  // KPI חדש: כמה זמינויות פעילות יש לי כרגע (courier_offers.status='active')
+  const [offersActiveCount, setOffersActiveCount] = useState<number>(0);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ---------- loaders ----------
+  // טען תמיד: metrics (jobs) + ספירת זמינויות פעילות
+  const loadKpis = useCallback(async () => {
+    if (!token) return;
+    const [m, myActiveOffers] = await Promise.all([
+      getCourierMetrics(String(token)),
+      // נטען רק את הפעילות כדי לספור ל-KPI; limit גבוה כדי לכסות בקלות
+      listMyCourierOffers(String(token), {
+        status: "active",
+        limit: 200,
+        offset: 0,
+      }),
+    ]);
+    setMetrics(m);
+    setOffersActiveCount(myActiveOffers.length);
+  }, [token]);
+
+  // טען תוכן לפי טאב (רשימות)
+  const loadForTab = useCallback(
+    async (b: CourierBucket) => {
+      if (!token) return;
+      setLoading(true);
+      try {
+        // נתחיל מקופסאות ה-KPI כדי שתהיה תחושה מהירה של עדכון
+        await loadKpis();
+
+        if (b === "available") {
+          // לטאב זמינות: מציגים את ההצעות שלי (כל הסטטוסים, לפי תאריך)
+          const myOffers = await listMyCourierOffers(String(token), {
+            limit: 50,
+            offset: 0,
+          });
+          setOffers(myOffers);
+          setJobs([]);
+        } else {
+          // לטאבים פעילות/הושלמו: מציגים Jobs
+          const list = await listCourierJobs(String(token), b);
+          setJobs(list);
+          setOffers([]);
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [token, loadKpis]
+  );
+
+  const loadAll = useCallback(async () => {
+    await loadForTab(tab);
+  }, [tab, loadForTab]);
 
   useEffect(() => {
     (async () => {
@@ -37,54 +105,54 @@ export default function CourierHome() {
     })();
   }, [token]);
 
-  const loadAll = useCallback(
-    async (b: CourierBucket) => {
-      if (!token) return;
-      setLoading(true);
-      try {
-        const [m, list] = await Promise.all([
-          getCourierMetrics(String(token)),
-          listCourierJobs(String(token), b),
-        ]);
-        setMetrics(m);
-        setItems(list);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [token]
-  );
-
   useEffect(() => {
-    loadAll(tab);
-  }, [tab, loadAll]);
+    loadAll();
+  }, [loadAll]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // רענון אוטומטי כשחוזרים למסך (למשל אחרי יצירת זמינות)
+      loadAll();
+    }, [loadAll])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadAll(tab);
+    await loadAll();
     setRefreshing(false);
-  }, [tab, loadAll]);
+  }, [loadAll]);
 
+  // ---------- UI helpers ----------
   const tabLabel = useMemo(
     () =>
       tab === "available" ? "זמינות" : tab === "active" ? "פעילות" : "הושלמו",
     [tab]
   );
 
-  function openOffers() {
-    Alert.alert("בקרוב", "מסך הצעות זמינות ✨");
+  function openNewAvailability() {
+    if (!token) {
+      Alert.alert("שגיאה", "חסרים פרטי התחברות (token)");
+      return;
+    }
+    router.push({ pathname: "/courier_offer_create", params: { token } });
   }
 
   function smartTip(): { title: string; subtitle: string } {
+    if (tab === "available") {
+      if (!offers.length)
+        return {
+          title: "אין זמינות רשומה",
+          subtitle: "לחצו על 'בדיקת זמינות' כדי לפרסם",
+        };
+      return {
+        title: "טיפ: עדכנו חלון זמן",
+        subtitle: "טווח רחב מגדיל התאמות עם בקשות פתוחות",
+      };
+    }
     if (!metrics)
       return {
-        title: "טיפ: בדוק הצעות חדשות",
-        subtitle: "הצעות מתעדכנות לאורך היום",
-      };
-    if ((metrics.available_count ?? 0) > 0)
-      return {
-        title: "יש הצעות זמינות",
-        subtitle: "פתח 'הצעות זמינות' כדי לבחור משימה",
+        title: "טיפ: בדוק משימות חדשות",
+        subtitle: "המשימות מתעדכנות לאורך היום",
       };
     if ((metrics.active_count ?? 0) === 0)
       return {
@@ -92,12 +160,20 @@ export default function CourierHome() {
         subtitle: "בדוק שוב מאוחר יותר או הפעל התראות",
       };
     return {
-      title: "זכור לעדכן סטטוס",
-      subtitle: "סמן 'בדרך' ו'הושלם' כדי שהשולח יתעדכן",
+      title: "זכרו לעדכן סטטוס",
+      subtitle: "סמנו 'בדרך' ו'הושלם' כדי שהשולח יתעדכן",
     };
   }
 
-  const latestId = items[0]?.id ? `ID: ${items[0].id}` : "ID: —";
+  const latestOffer = offers[0];
+  const latestJob = jobs[0];
+  const heroTitle = tab === "available" ? "הזמינות האחרונה" : "המשימה האחרונה";
+  const heroIdText =
+    tab === "available"
+      ? offerRange(latestOffer?.window_start, latestOffer?.window_end) || "—"
+      : latestJob?.id
+      ? `ID: ${latestJob.id}`
+      : "ID: —";
 
   return (
     <View style={S.screen}>
@@ -108,75 +184,110 @@ export default function CourierHome() {
 
       {/* KPIs */}
       <View style={S.kpiRow}>
-        <KPI title="זמינות" value={metrics?.available_count ?? 0} />
+        {/* ← עכשיו הקופסה הראשונה מציגה את מספר הזמינויות הפעילות מה-courier_offers */}
+        <KPI title="זמינות" value={offersActiveCount} />
         <KPI title="בביצוע" value={metrics?.active_count ?? 0} />
         <KPI title="הושלמו" value={metrics?.delivered_count ?? 0} />
       </View>
 
-      {/* Tabs directly under KPIs */}
+      {/* Tabs (כמו אצל השולח/ריידר) */}
       <View style={S.tabs}>
         {(["available", "active", "delivered"] as CourierBucket[]).map((b) => (
-          <Text
+          <TouchableOpacity
             key={b}
-            style={[S.tab, tab === b && S.tabActive]}
             onPress={() => setTab(b)}
+            style={[S.tabBtn, tab === b && S.tabBtnActive]}
           >
-            {b === "available"
-              ? "זמינות"
-              : b === "active"
-              ? "פעילות"
-              : "הושלמו"}
-          </Text>
+            <Text style={[S.tabTxt, tab === b && S.tabTxtActive]}>
+              {b === "available"
+                ? "זמינות"
+                : b === "active"
+                ? "פעילות"
+                : "הושלמו"}
+            </Text>
+          </TouchableOpacity>
         ))}
       </View>
 
-      {/* Latest job hero */}
-      <HeroCard title="משימה אחרונה" idText={latestId} tone="primary" />
-
-      {/* List */}
-      <FlatList
-        data={items}
-        keyExtractor={(it) => it.id}
-        contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        ListHeaderComponent={
-          <Text style={S.tip}>
-            {smartTip().title} · {smartTip().subtitle}
-          </Text>
-        }
-        ListEmptyComponent={
-          <Text style={S.empty}>
-            {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabLabel}"`}
-          </Text>
-        }
-        renderItem={({ item }) => (
-          <ListCard
-            title={`${item.from_address} → ${item.to_address}`}
-            subtitle={`${fmtWindow(
-              item.window_start,
-              item.window_end
-            )} • ${statusLabel(item.status)} • ${
-              item.type === "package" ? "חבילה" : "טרמפ"
-            }`}
-            tone="primary"
-          />
-        )}
+      {/* Hero + Tip */}
+      <HeroCard
+        title={heroTitle}
+        idText={heroIdText}
+        tone="mocha"
+        style={{ marginTop: 10 }}
       />
+      <RewardBanner
+        title={smartTip().title}
+        subtitle={smartTip().subtitle}
+        tone="primary"
+      />
+
+      {/* Lists — FlatList נפרד לכל טיפוס כדי לפתור TS */}
+      {tab === "available" ? (
+        <FlatList<CourierOfferRow>
+          data={offers}
+          keyExtractor={(it) => it.id}
+          contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <Text style={S.empty}>
+              {loading ? "טוען…" : `אין פריטים בקטגוריה "זמינות"`}
+            </Text>
+          }
+          renderItem={({ item }) => (
+            <ListCard
+              title={`${item.from_address} → ${item.to_address || "כל יעד"}`}
+              subtitle={`${offerRange(
+                item.window_start,
+                item.window_end
+              )} • סטטוס: ${item.status} • סוגים: ${item.types.join(", ")}`}
+              tone="primary"
+            />
+          )}
+        />
+      ) : (
+        <FlatList<CourierJobRow>
+          data={jobs}
+          keyExtractor={(it) => it.id}
+          contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <Text style={S.empty}>
+              {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabLabel}"`}
+            </Text>
+          }
+          renderItem={({ item }) => (
+            <ListCard
+              title={`${item.from_address} → ${item.to_address}`}
+              subtitle={`${fmtWindow(
+                item.window_start,
+                item.window_end
+              )} • ${statusLabel(item.status)} • ${
+                item.type === "package" ? "חבילה" : "טרמפ"
+              }`}
+              tone="primary"
+            />
+          )}
+        />
+      )}
 
       {/* Bottom full-width CTA */}
       <TouchableOpacity
         style={S.bottomBar}
         activeOpacity={0.9}
-        onPress={openOffers}
+        onPress={openNewAvailability}
       >
-        <Text style={S.bottomBarText}>מצאו הצעות זמינות</Text>
+        <Text style={S.bottomBarText}>בדיקת זמינות</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
+/* helpers */
 function statusLabel(s: CourierJobRow["status"]) {
   return s === "open"
     ? "פתוח"
@@ -213,31 +324,36 @@ function fmtWindow(s?: string | null, e?: string | null) {
   if (e) return `עד: ${fmtDate(e)} ${fmtTime(e)}`;
   return "ללא חלון זמן";
 }
+function offerRange(s?: string | null, e?: string | null) {
+  if (!s && !e) return "";
+  if (s && e) {
+    const same = fmtDate(s) === fmtDate(e);
+    return same
+      ? `${fmtDate(s)} ${fmtTime(s)}–${fmtTime(e)}`
+      : `${fmtDate(s)} ${fmtTime(s)} → ${fmtDate(e)} ${fmtTime(e)}`;
+  }
+  if (s) return `מ־${fmtDate(s)} ${fmtTime(s)}`;
+  return `עד־${fmtDate(e!)} ${fmtTime(e!)}`;
+}
 
 const S = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
   kpiRow: { flexDirection: "row-reverse", marginTop: 4, marginBottom: 10 },
-  tabs: { flexDirection: "row-reverse", gap: 10, marginTop: 12 },
-  tab: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+
+  // Tabs — אותו עיצוב כמו בשאר הדפים
+  tabs: {
+    flexDirection: "row-reverse",
+    backgroundColor: "#fff",
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
-    color: COLORS.primaryDark,
-    fontWeight: "800",
-  },
-  tabActive: {
-    backgroundColor: COLORS.primary,
-    color: "#fff",
-    borderColor: COLORS.primary,
-  },
-  tip: {
-    textAlign: "center",
-    color: COLORS.dim,
+    overflow: "hidden",
     marginTop: 8,
-    marginBottom: 8,
   },
+  tabBtn: { flex: 1, paddingVertical: 10, alignItems: "center" },
+  tabBtnActive: { backgroundColor: COLORS.primary },
+  tabTxt: { color: COLORS.primaryDark, fontWeight: "700" },
+  tabTxtActive: { color: "#fff" },
 
   empty: { textAlign: "center", color: COLORS.dim, marginTop: 18 },
 

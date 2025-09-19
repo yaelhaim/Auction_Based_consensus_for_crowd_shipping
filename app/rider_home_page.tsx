@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   getMyProfile,
   getRiderMetrics,
@@ -27,6 +27,7 @@ import {
 import { COLORS } from "./ui/theme";
 
 export default function RiderHome() {
+  const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
   const [name, setName] = useState("");
   const [tab, setTab] = useState<RiderBucket>("open");
@@ -77,7 +78,11 @@ export default function RiderHome() {
   );
 
   function openNewRide() {
-    Alert.alert("בקרוב", "מסך חיפוש/יצירת טרמפ ✨");
+    if (!token) {
+      Alert.alert("שגיאה", "חסרים פרטי התחברות (token)");
+      return;
+    }
+    router.push({ pathname: "/rider_request_create", params: { token } });
   }
 
   function smartTip(): { title: string; subtitle: string } {

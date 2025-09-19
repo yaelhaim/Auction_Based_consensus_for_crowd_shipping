@@ -11,6 +11,7 @@ from .routes_sender import router as sender_router
 from .routes_rider import router as rider_router       
 from .routes_courier import router as courier_router
 from .routes_requests import router as requests_router
+from .routes_courier import router as courier_router
 
 
 app = FastAPI()
@@ -37,6 +38,7 @@ app.include_router(sender_router)
 app.include_router(rider_router) 
 app.include_router(courier_router) 
 app.include_router(requests_router)
+app.include_router(courier_router)
 
 
 @app.get("/debug/dbinfo")
