@@ -1,3 +1,4 @@
+// app/rider_home_page.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
@@ -17,14 +18,10 @@ import {
   type RiderRequestRow,
   type RiderBucket,
 } from "../lib/api";
-import {
-  Header,
-  KPI,
-  HeroCard,
-  RewardBanner,
-  ListCard,
-} from "./components/Primitives";
+import { Header, KPI, HeroCard, ListCard } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
+
+const ROLE_RIDER_LABEL = "מחפש/ת טרמפ";
 
 export default function RiderHome() {
   const router = useRouter();
@@ -49,12 +46,16 @@ export default function RiderHome() {
       if (!token) return;
       setLoading(true);
       try {
-        const [m, list] = await Promise.all([
+        const [m, listRaw] = await Promise.all([
           getRiderMetrics(String(token)),
           listRiderRequests(String(token), b),
         ]);
+        // Safety net: ודאי שרק טרמפים מוצגים ב-UI
+        const list = (listRaw ?? []).filter((r: any) => r?.type === "ride");
         setMetrics(m);
-        setItems(list);
+        setItems(list as RiderRequestRow[]);
+      } catch (e: any) {
+        Alert.alert("שגיאה", e?.message || "טעינת הדף נכשלה");
       } finally {
         setLoading(false);
       }
@@ -85,45 +86,23 @@ export default function RiderHome() {
     router.push({ pathname: "/rider_request_create", params: { token } });
   }
 
-  function smartTip(): { title: string; subtitle: string } {
-    if (!metrics)
-      return {
-        title: "טיפ: מצאי טרמפ מוקדם",
-        subtitle: "נסיעות מבוקשות נסגרות מהר",
-      };
-    if ((metrics.open_count ?? 0) === 0)
-      return {
-        title: "אין בקשות פתוחות",
-        subtitle: "לחצי על הכפתור הירוק כדי להתחיל חיפוש",
-      };
-    if ((metrics.active_count ?? 0) === 0)
-      return {
-        title: "טיפ: הגדירי חלון זמן",
-        subtitle: "טווח שעות רחב יותר מגדיל סיכויי התאמה",
-      };
-    return {
-      title: "תזכורת שימושית",
-      subtitle: "עקבי אחרי הנסיעות הפעילות בלשונית 'פעילות'",
-    };
-  }
-
   const latestId = items[0]?.id ? `ID: ${items[0].id}` : "ID: —";
 
   return (
     <View style={S.screen}>
       <Header
         title={`היי${name ? `, ${name}` : ""}`}
-        subtitle="ברוכים הבאים למסך הבית למחפשי טרמפ"
+        subtitle={`מסך הבית של ${ROLE_RIDER_LABEL}`}
       />
 
       {/* KPIs */}
       <View style={S.kpiRow}>
         <KPI title="פתוחות" value={metrics?.open_count ?? 0} />
-        <KPI title="בדרך" value={metrics?.active_count ?? 0} />
+        <KPI title="בפעילות" value={metrics?.active_count ?? 0} />
         <KPI title="הושלמו" value={metrics?.completed_count ?? 0} />
       </View>
 
-      {/* Tabs directly under KPIs */}
+      {/* Tabs */}
       <View style={S.tabs}>
         {(["open", "active", "completed"] as RiderBucket[]).map((b) => (
           <TouchableOpacity
@@ -144,13 +123,6 @@ export default function RiderHome() {
         idText={latestId}
         tone="mocha"
         style={{ marginTop: 10 }}
-      />
-
-      {/* Smart tip banner */}
-      <RewardBanner
-        title={smartTip().title}
-        subtitle={smartTip().subtitle}
-        tone="primary"
       />
 
       <FlatList
@@ -183,7 +155,7 @@ export default function RiderHome() {
         activeOpacity={0.9}
         onPress={openNewRide}
       >
-        <Text style={S.bottomBarText}>מצאו טרמפ</Text>
+        <Text style={S.bottomBarText}>הוספת בקשת טרמפ</Text>
       </TouchableOpacity>
     </View>
   );
@@ -200,6 +172,7 @@ function statusLabel(s: RiderRequestRow["status"]) {
     ? "הושלם"
     : "בוטל";
 }
+
 function fmtDate(iso?: string | null) {
   if (!iso) return "";
   const d = new Date(iso);

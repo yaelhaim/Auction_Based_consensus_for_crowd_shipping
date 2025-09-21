@@ -145,6 +145,47 @@ export function ListCard({
   );
 }
 
+/** Wide action button styled like RewardBanner (for “פתוחות/פעילות/הושלמו” etc.) */
+export function ActionBanner({
+  title,
+  subtitle,
+  active = false,
+  onPress,
+}: {
+  title: string;
+  subtitle?: string;
+  active?: boolean;
+  onPress?: () => void;
+}) {
+  const bg = active ? COLORS.primary : COLORS.softSage;
+  const titleColor = active ? "#fff" : COLORS.text;
+  const subColor = active ? "#f6f7f8" : COLORS.dim;
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.95}
+      style={[
+        S.reward,
+        { backgroundColor: bg },
+        SHADOW.card,
+        { marginTop: 10 },
+      ]}
+    >
+      <View style={[S.rewardBadge, { backgroundColor: "#fff" }]}>
+        <Text style={[S.rewardBadgeText, { color: COLORS.primaryDark }]}>
+          ●
+        </Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[S.rewardTitle, { color: titleColor }]}>{title}</Text>
+        {!!subtitle && (
+          <Text style={[S.rewardSub, { color: subColor }]}>{subtitle}</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 const S = StyleSheet.create({
   header: {
     flexDirection: "row-reverse",
@@ -176,6 +217,7 @@ const S = StyleSheet.create({
   },
   chipText: { fontWeight: "800", color: COLORS.text },
 
+  // White rounded KPI tiles (match your older home design)
   kpi: {
     flex: 1,
     backgroundColor: COLORS.card,
@@ -185,9 +227,10 @@ const S = StyleSheet.create({
     marginHorizontal: 5,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
+    alignItems: "center",
   },
-  kpiVal: { fontWeight: "900", fontSize: 18, textAlign: "right" },
-  kpiLabel: { color: COLORS.dim, marginTop: 4, textAlign: "right" },
+  kpiVal: { fontWeight: "900", fontSize: 18, textAlign: "center" },
+  kpiLabel: { color: COLORS.dim, marginTop: 4, textAlign: "center" },
 
   hero: {
     flexDirection: "row-reverse",

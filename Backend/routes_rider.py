@@ -1,103 +1,101 @@
-# FastAPI routes for "Rider" (ride seeker) dashboard using SQL text().
-# Endpoints:
-#   GET /rider/metrics
-#   GET /rider/requests?status=open|active|completed&limit=50&offset=0
-
-from fastapi import APIRouter, Depends, Query
-from typing import Literal
+# routes_rider.py
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-
+from typing import List, Dict, Any
 from .Database.db import get_db
-from .auth_dep import get_current_user  # same dep as in routes_users.py
+from .auth_dep import get_current_user
 
 router = APIRouter(prefix="/rider", tags=["rider"])
 
-def _iso(dt):
-    return dt.isoformat() if dt else None
+RIDER_TYPES: List[str] = ["ride"]  # הוסיפי כאן עוד ערכים אם יש, למשל "carpool"
 
-# ------------------------------ Metrics -------------------------------------
+def _status_bucket_to_sql_list(bucket: str) -> List[str]:
+    bucket = (bucket or "").lower()
+    if bucket == "open":
+        return ["open"]
+    if bucket == "active":
+        # במודל שלך 'matched' + 'in_transit' נחשבים פעילים
+        return ["matched", "in_transit"]
+    if bucket == "completed" or bucket == "delivered":
+        return ["completed"]
+    raise HTTPException(status_code=400, detail="Invalid status bucket")
 
 @router.get("/metrics")
 def rider_metrics(
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me: Dict[str, Any] = Depends(get_current_user),
 ):
-    """
-    Counts for the rider's own 'passenger' requests.
-    open_count     -> status='open'
-    active_count   -> status IN ('assigned','in_transit')
-    completed_count-> status='completed'
-    """
-    q = text("""
-        SELECT
-          SUM( CASE WHEN status = 'open' THEN 1 ELSE 0 END ) AS open_count,
-          SUM( CASE WHEN status IN ('assigned','in_transit') THEN 1 ELSE 0 END ) AS active_count,
-          SUM( CASE WHEN status = 'completed' THEN 1 ELSE 0 END ) AS completed_count
-        FROM requests
-        WHERE owner_user_id = :uid
-          AND type = 'passenger'
-    """)
-    row = db.execute(q, {"uid": me["id"]}).mappings().first()
+    uid = me["id"]
+    tph = ", ".join(f":t{i}" for i in range(len(RIDER_TYPES)))
+    tparams = {f"t{i}": t for i, t in enumerate(RIDER_TYPES)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT status, COUNT(*) AS cnt
+            FROM requests
+            WHERE owner_user_id = :uid
+              AND type IN ({tph})
+            GROUP BY status
+        """),
+        {"uid": uid, **tparams},
+    ).mappings().all()
+
+    by = {r["status"]: int(r["cnt"]) for r in rows}
+    open_count = by.get("open", 0)
+    active_count = by.get("matched", 0) + by.get("in_transit", 0)
+    completed_count = by.get("completed", 0)
+
     return {
-        "open_count": int(row["open_count"] or 0),
-        "active_count": int(row["active_count"] or 0),
-        "completed_count": int(row["completed_count"] or 0),
+      "open_count": open_count,
+      "active_count": active_count,
+      "completed_count": completed_count,
     }
 
-# ------------------------------- List ---------------------------------------
-
 @router.get("/requests")
-def rider_requests(
-    status: Literal["open","active","completed"] = Query("open"),
+def list_rider_requests(
+    status: str = Query("open", description="open | active | completed"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me: Dict[str, Any] = Depends(get_current_user),
 ):
-    """
-    List rider's 'passenger' requests by bucket using explicit IN, no ANY().
-    """
-    if status == "open":
-        status_sql = "status = 'open'"
-    elif status == "active":
-        status_sql = "status IN ('assigned','in_transit')"
-    else:  # "completed"
-        status_sql = "status = 'completed'"
+    uid = me["id"]
+    statuses = _status_bucket_to_sql_list(status)
 
-    q = text(f"""
-        SELECT
-          id::text AS id,
-          status::text AS status,
-          from_address,
-          to_address,
-          window_start,
-          window_end,
-          COALESCE(passengers, 1) AS seats,
-          notes,
-          created_at
-        FROM requests
-        WHERE owner_user_id = :uid
-          AND type = 'passenger'
-          AND {status_sql}
-        ORDER BY created_at DESC
-        LIMIT :limit OFFSET :offset
-    """)
-    rows = db.execute(q, {"uid": me["id"], "limit": limit, "offset": offset}).mappings().all()
+    sph = ", ".join(f":s{i}" for i in range(len(statuses)))
+    tph = ", ".join(f":t{i}" for i in range(len(RIDER_TYPES)))
+    params = {
+        "uid": uid,
+        "limit": limit,
+        "offset": offset,
+        **{f"s{i}": s for i, s in enumerate(statuses)},
+        **{f"t{i}": t for i, t in enumerate(RIDER_TYPES)},
+    }
 
-    out = []
-    for r in rows:
-        # UI prefers "matched" instead of DB 'assigned'
-        ui_status = "matched" if r["status"] == "assigned" else r["status"]
-        out.append({
-            "id": r["id"],
-            "status": ui_status,
-            "from_address": r["from_address"],
-            "to_address": r["to_address"],
-            "window_start": _iso(r["window_start"]),
-            "window_end": _iso(r["window_end"]),
-            "seats": int(r["seats"] or 1),
-            "notes": r["notes"],
-            "created_at": _iso(r["created_at"]),
-        })
-    return out
+    rows = db.execute(
+        text(f"""
+            SELECT
+              id,
+              owner_user_id,
+              type,
+              from_address, from_lat, from_lon,
+              to_address,   to_lat,   to_lon,
+              passengers,
+              notes,
+              window_start,
+              window_end,
+              status,
+              created_at,
+              updated_at
+            FROM requests
+            WHERE owner_user_id = :uid
+              AND type IN ({tph})
+              AND status IN ({sph})
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    ).mappings().all()
+
+    return [dict(r) for r in rows]

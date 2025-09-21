@@ -1,3 +1,4 @@
+// app/sender_home_page.tsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   View,
@@ -7,8 +8,11 @@ import {
   RefreshControl,
   TouchableOpacity,
   Alert,
+  Dimensions,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router"; // ← add useRouter
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+
 import {
   getMyProfile,
   getSenderMetrics,
@@ -17,18 +21,15 @@ import {
   type RequestRow,
   type SenderBucket,
 } from "../lib/api";
-import {
-  Header,
-  KPI,
-  HeroCard,
-  RewardBanner,
-  ListCard,
-} from "./components/Primitives";
+import { ListCard, ActionBanner } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 
+const H = Dimensions.get("window").height;
+
 export default function SenderHome() {
-  const router = useRouter(); // ← router for navigation
+  const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
+
   const [firstName, setFirstName] = useState("");
   const [tab, setTab] = useState<SenderBucket>("open");
   const [items, setItems] = useState<RequestRow[]>([]);
@@ -39,8 +40,10 @@ export default function SenderHome() {
   useEffect(() => {
     (async () => {
       if (!token) return;
-      const me = await getMyProfile(String(token));
-      setFirstName(me?.first_name || "");
+      try {
+        const me: any = await getMyProfile(String(token));
+        setFirstName(me?.first_name || "");
+      } catch {}
     })();
   }, [token]);
 
@@ -49,12 +52,16 @@ export default function SenderHome() {
       if (!token) return;
       setLoading(true);
       try {
-        const [m, list] = await Promise.all([
+        const [m, listRaw] = await Promise.all([
           getSenderMetrics(String(token)),
           listSenderRequests(String(token), bucket),
         ]);
+        // Safety net: keep only sender-type requests (exclude rides, if any)
+        const filtered = (listRaw ?? []).filter(
+          (r: any) => r?.type !== "ride"
+        ) as RequestRow[];
         setMetrics(m);
-        setItems(list);
+        setItems(filtered);
       } catch (e: any) {
         Alert.alert("שגיאה", e?.message || "טעינת הדף נכשלה");
       } finally {
@@ -74,13 +81,11 @@ export default function SenderHome() {
     setRefreshing(false);
   }, [tab, loadAll]);
 
-  // Compute current tab label (Hebrew)
   const tabTitle = useMemo(
     () => (tab === "open" ? "פתוחות" : tab === "active" ? "פעילות" : "הושלמו"),
     [tab]
   );
 
-  // Bottom CTA: navigate to Create Request screen (passes token)
   function newRequest() {
     router.push({
       pathname: "/sender_request_create",
@@ -88,116 +93,107 @@ export default function SenderHome() {
     });
   }
 
-  // Smart “tip” banner content (instead of weekly reward)
-  function smartTip(): { title: string; subtitle: string } {
-    if (!metrics)
-      return {
-        title: "טיפ: התחילי בבקשה חדשה",
-        subtitle: "לחצי על הכפתור הירוק בתחתית",
-      };
-    if ((metrics.open_count ?? 0) === 0)
-      return {
-        title: "אין בקשות פתוחות",
-        subtitle: "לחצי על 'יצירת בקשת משלוח' כדי להתחיל",
-      };
-    if ((metrics.active_count ?? 0) === 0)
-      return {
-        title: "טיפ: הגדירי חלון זמן",
-        subtitle: "חלון זמן ברור עוזר למציאת שליח מהר יותר",
-      };
-    return {
-      title: "תזכורת שימושית",
-      subtitle: "עקבי אחרי המשלוחים הפעילים בלשונית 'פעילות'",
-    };
-  }
+  const Header = (
+    <>
+      {/* FULL-WIDTH brown section that SCROLLS; rounded bottom corners */}
+      <View style={[S.topPanel, { minHeight: H * 0.46 }]}>
+        <View style={S.avatarWrap}>
+          <View style={S.avatarCircle}>
+            <Ionicons name="person" size={30} color={COLORS.text} />
+          </View>
+        </View>
 
-  // Pick the “latest request” card content
-  const latestId = items[0]?.id ? `ID: ${items[0].id}` : "ID: —";
+        <Text style={S.hello}>היי{firstName ? `, ${firstName}` : ""}</Text>
+
+        {/* Compact white KPI pills (slightly raised from bottom) */}
+        <View style={S.kpiBarPinned}>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{metrics?.open_count ?? 0}</Text>
+            <Text style={S.kpiPillLabel}>פתוחות</Text>
+          </View>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{metrics?.active_count ?? 0}</Text>
+            <Text style={S.kpiPillLabel}>בפעילות</Text>
+          </View>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{metrics?.delivered_count ?? 0}</Text>
+            <Text style={S.kpiPillLabel}>הושלמו</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Action cards under the brown header */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+        <ActionBanner
+          title="צפייה בבקשות פתוחות"
+          subtitle="בקשות שמחכות לשיבוץ"
+          active={tab === "open"}
+          onPress={() => setTab("open")}
+        />
+        <ActionBanner
+          title="צפייה במשלוחים בפעילות"
+          subtitle="משלוחים בדרך / שובצו לשליח"
+          active={tab === "active"}
+          onPress={() => setTab("active")}
+        />
+        <ActionBanner
+          title="צפייה במשלוחים שהושלמו"
+          subtitle="היסטוריית המשלוחים שלך"
+          active={tab === "delivered"}
+          onPress={() => setTab("delivered")}
+        />
+
+        <Text style={S.sectionTitle}>רשימת {tabTitle}</Text>
+      </View>
+    </>
+  );
 
   return (
     <View style={S.screen}>
-      <Header
-        title={`היי${firstName ? `, ${firstName}` : ""}`}
-        subtitle="ברוכה הבאה למסך הבית של השולחים"
-      />
-
-      {/* KPIs */}
-      <View style={S.kpiRow}>
-        <KPI title="בקשות פתוחות" value={metrics?.open_count ?? 0} />
-        <KPI title="משלוחים פעילים" value={metrics?.active_count ?? 0} />
-        <KPI title="הושלמו" value={metrics?.delivered_count ?? 0} />
-      </View>
-
-      {/* Tabs directly under KPIs */}
-      <View style={S.tabs}>
-        {(["open", "active", "delivered"] as SenderBucket[]).map((b) => (
-          <TouchableOpacity
-            key={b}
-            onPress={() => setTab(b)}
-            style={[S.tabBtn, tab === b && S.tabBtnActive]}
-          >
-            <Text style={[S.tabTxt, tab === b && S.tabTxtActive]}>
-              {b === "open" ? "פתוחות" : b === "active" ? "פעילות" : "הושלמו"}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* “Latest request” hero */}
-      <HeroCard
-        title="הבקשה האחרונה"
-        idText={latestId}
-        tone="mocha"
-        style={{ marginTop: 10 }}
-      />
-
-      {/* Smart tip banner */}
-      <RewardBanner
-        title={smartTip().title}
-        subtitle={smartTip().subtitle}
-        tone="primary"
-      />
-
-      {/* List */}
       <FlatList
         data={items}
         keyExtractor={(it) => it.id}
-        contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        contentContainerStyle={{
+          paddingBottom: 72, // space for bottom full-width button
+        }}
+        ListHeaderComponent={Header}
+        renderItem={({ item }) => (
+          <View style={{ paddingHorizontal: 16 }}>
+            <ListCard
+              title={`${item.from_address} → ${item.to_address}`}
+              subtitle={`${fmtWindow(
+                item.window_start,
+                item.window_end
+              )} • ${statusLabel(item.status)} • ${
+                item.type === "package" ? "חבילה" : "טרמפ"
+              }`}
+              tone="primary"
+            />
+          </View>
+        )}
         ListEmptyComponent={
           <Text style={S.empty}>
             {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabTitle}"`}
           </Text>
         }
-        renderItem={({ item }) => (
-          <ListCard
-            title={`${item.from_address} → ${item.to_address}`}
-            subtitle={`${fmtWindow(
-              item.window_start,
-              item.window_end
-            )} • ${statusLabel(item.status)} • ${
-              item.type === "package" ? "חבילה" : "טרמפ"
-            }`}
-            tone="primary"
-          />
-        )}
       />
 
-      {/* Bottom full-width CTA */}
+      {/* Full-width sticky bottom button (edge-to-edge, square) */}
       <TouchableOpacity
-        style={S.bottomBar}
-        activeOpacity={0.9}
+        style={S.fullWidthBarBtn}
         onPress={newRequest}
+        activeOpacity={0.9}
       >
-        <Text style={S.bottomBarText}>יצירת בקשת משלוח</Text>
+        <Text style={S.fullWidthBarBtnTxt}>הוספת בקשה</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-/* helpers */
+/* ---------------- helpers ---------------- */
 function statusLabel(s: RequestRow["status"]) {
   return s === "open"
     ? "פתוחה"
@@ -235,33 +231,112 @@ function fmtWindow(s?: string | null, e?: string | null) {
   return "ללא חלון זמן";
 }
 
+/* ---------------- styles ---------------- */
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
-  kpiRow: { flexDirection: "row-reverse", marginTop: 4, marginBottom: 10 },
-  tabs: {
-    flexDirection: "row-reverse",
+  screen: { flex: 1, backgroundColor: COLORS.bg },
+
+  // FULL-WIDTH mocha section (scrolls with content) with rounded bottom corners
+  topPanel: {
+    backgroundColor: COLORS.softMocha,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    marginTop: 0,
+    marginHorizontal: 0,
+    paddingTop: 32,
+    paddingBottom: 78, // room for KPI pills
+    paddingHorizontal: 16,
+    position: "relative",
+    alignItems: "center",
+  },
+
+  // Avatar
+  avatarWrap: {
+    width: "100%",
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  avatarCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: "#fff",
-    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+
+  hello: {
+    marginTop: 8,
+    fontSize: 20,
+    fontWeight: "900",
+    color: COLORS.text,
+    textAlign: "center",
+    writingDirection: "ltr",
+  },
+
+  // White KPI pills (slightly raised from bottom)
+  kpiBarPinned: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 30,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  kpiPill: {
+    width: 92,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    alignItems: "center",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
-    overflow: "hidden",
-    marginTop: 8,
   },
-  tabBtn: { flex: 1, paddingVertical: 10, alignItems: "center" },
-  tabBtnActive: { backgroundColor: COLORS.primary },
-  tabTxt: { color: COLORS.primaryDark, fontWeight: "700" },
-  tabTxtActive: { color: "#fff" },
-  empty: { textAlign: "center", color: COLORS.dim, marginTop: 18 },
+  kpiPillVal: { fontWeight: "900", fontSize: 17, textAlign: "center" },
+  kpiPillLabel: {
+    color: COLORS.dim,
+    fontSize: 12,
+    marginTop: 3,
+    textAlign: "center",
+  },
 
-  // Bottom full-width CTA styles
-  bottomBar: {
+  sectionTitle: {
+    marginTop: 16,
+    marginBottom: 8,
+    fontWeight: "900",
+    color: COLORS.primaryDark,
+    textAlign: "left",
+  },
+
+  empty: {
+    textAlign: "center",
+    color: COLORS.dim,
+    marginTop: 18,
+    paddingHorizontal: 16,
+  },
+
+  // Full-width sticky bottom button (edge-to-edge, no radius)
+  fullWidthBarBtn: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    paddingVertical: 16,
+    height: 56,
     backgroundColor: COLORS.primary,
     alignItems: "center",
+    justifyContent: "center",
   },
-  bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  fullWidthBarBtnTxt: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 16,
+  },
 });
