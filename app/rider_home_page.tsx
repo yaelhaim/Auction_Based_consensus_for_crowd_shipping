@@ -10,6 +10,7 @@ import {
   Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   getMyProfile,
   getRiderMetrics,
@@ -50,10 +51,8 @@ export default function RiderHome() {
           getRiderMetrics(String(token)),
           listRiderRequests(String(token), b),
         ]);
-        // Safety net: ודאי שרק טרמפים מוצגים ב-UI
-        const list = (listRaw ?? []).filter((r: any) => r?.type === "ride");
         setMetrics(m);
-        setItems(list as RiderRequestRow[]);
+        setItems((listRaw ?? []) as RiderRequestRow[]);
       } catch (e: any) {
         Alert.alert("שגיאה", e?.message || "טעינת הדף נכשלה");
       } finally {
@@ -66,6 +65,13 @@ export default function RiderHome() {
   useEffect(() => {
     loadAll(tab);
   }, [tab, loadAll]);
+
+  // 🔁 רענון אוטומטי בכל פעם שהמסך נכנס לפוקוס (כשחוזרים מדף יצירה)
+  useFocusEffect(
+    useCallback(() => {
+      loadAll(tab);
+    }, [loadAll, tab])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -164,7 +170,7 @@ export default function RiderHome() {
 function statusLabel(s: RiderRequestRow["status"]) {
   return s === "open"
     ? "פתוחה"
-    : s === "matched"
+    : s === "assigned"
     ? "שובץ נהג"
     : s === "in_transit"
     ? "בדרך"

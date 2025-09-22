@@ -70,6 +70,18 @@ export interface ProfileInput {
 /** Common list options (offset pagination). */
 export type ListOpts = { limit?: number; offset?: number };
 
+/** Unified status type across app. */
+export type CommonStatus =
+  | "open"
+  | "assigned" // we use 'assigned' instead of legacy 'matched'
+  | "in_transit"
+  | "completed"
+  | "cancelled";
+
+function normalizeStatus(s: string): CommonStatus {
+  return s === "matched" ? "assigned" : (s as CommonStatus);
+}
+
 // ------------------------------ Fetch helpers ------------------------------
 
 function authHeaders(token?: string): HeadersInit {
@@ -201,29 +213,29 @@ export async function upsertProfile(
   });
 }
 
-// --------------------------- Sender (package/ride) --------------------------
+// --------------------------- Sender (packages) ------------------------------
 
-/** A generic request created by a sender (package or passenger). */
+/** A request created by a sender. */
 export type RequestRow = {
   id: string;
   owner_user_id: string;
-  type: "passenger" | "package";
+  type: "package" | "ride"; // keep 'ride' for compatibility where screens check it
   from_address: string;
   from_lat?: number | null;
   from_lon?: number | null;
   to_address: string;
   to_lat?: number | null;
   to_lon?: number | null;
-  passengers?: number | null; // default 1 for 'passenger'
+  passengers?: number | null; // present if came from rider flow
   notes?: string | null;
   window_start?: string | null; // ISO string
   window_end?: string | null; // ISO string
-  status: "open" | "assigned" | "in_transit" | "completed" | "cancelled";
+  status: CommonStatus;
   created_at: string; // ISO
   updated_at: string; // ISO
 
-  // ★ New columns added to DB:
-  max_price: number; // NUMERIC(10,2) → number in JSON
+  // Columns often used in UI:
+  max_price?: number | null; // NUMERIC(10,2) → number in JSON
   pickup_contact_name?: string | null; // VARCHAR(100)
   pickup_contact_phone?: string | null; // VARCHAR(32)
 };
@@ -254,19 +266,24 @@ export async function listSenderRequests(
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
-  return jsonFetch<RequestRow[]>(
+  const rows = await jsonFetch<any[]>(
     `${BASE_URL}/sender/requests?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
+  // normalize status just in case
+  return rows.map((r) => ({
+    ...r,
+    status: normalizeStatus(r.status),
+  })) as RequestRow[];
 }
 
 // ------------------------------ Courier (driver) ----------------------------
 
-/** Courier job row shown to drivers (may originate from sender requests). */
+/** Courier job row shown to drivers (may originate from sender/rider requests). */
 export type CourierJobRow = {
   id: string;
   type: "package" | "passenger";
-  status: "open" | "assigned" | "in_transit" | "completed" | "cancelled";
+  status: CommonStatus;
   from_address: string;
   to_address: string;
   window_start?: string | null;
@@ -307,10 +324,14 @@ export async function listCourierJobs(
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
-  return jsonFetch<CourierJobRow[]>(
+  const rows = await jsonFetch<any[]>(
     `${BASE_URL}/courier/jobs?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
+  return rows.map((r) => ({
+    ...r,
+    status: normalizeStatus(r.status),
+  })) as CourierJobRow[];
 }
 
 /** Optional: actions for courier lifecycle (wire when screens are ready). */
@@ -399,13 +420,14 @@ export async function listMyCourierOffers(
 /** Rider requests (a rider looking to join a ride). */
 export type RiderRequestRow = {
   id: string;
-  status: "open" | "matched" | "in_transit" | "completed" | "cancelled";
+  status: CommonStatus; // normalized; legacy 'matched' → 'assigned'
   from_address: string;
   to_address: string;
   window_start?: string | null;
   window_end?: string | null;
-  seats?: number | null; // requested seats
+  passengers?: number | null; // requested seats
   notes?: string | null;
+  max_price?: number | null;
   created_at: string; // ISO
 };
 
@@ -413,6 +435,7 @@ export type RiderMetrics = {
   open_count: number;
   active_count: number;
   completed_count: number;
+  cancelled_count?: number;
 };
 
 /** Tabs for rider list. */
@@ -434,23 +457,30 @@ export async function listRiderRequests(
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
-  return jsonFetch<RiderRequestRow[]>(
+  const rows = await jsonFetch<any[]>(
     `${BASE_URL}/rider/requests?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
+  return rows.map((r) => ({
+    ...r,
+    status: normalizeStatus(r.status),
+  })) as RiderRequestRow[];
 }
 
-/** Optional: rider actions (e.g., create/join/cancel) – wire when needed. */
-export async function riderCreateRequest(
+/** Rider – create new ride request. */
+export type CreateRiderPayload = {
+  from_address: string;
+  to_address: string;
+  window_start: string; // ISO
+  window_end: string; // ISO
+  passengers: number;
+  notes?: string | null;
+  max_price?: number | null;
+};
+
+export async function createRiderRequest(
   token: string,
-  payload: {
-    from_address: string;
-    to_address: string;
-    window_start?: string | null;
-    window_end?: string | null;
-    seats?: number | null;
-    notes?: string | null;
-  }
+  payload: CreateRiderPayload
 ) {
   return jsonFetch<RiderRequestRow>(`${BASE_URL}/rider/requests`, {
     method: "POST",
@@ -466,25 +496,11 @@ export async function riderCancelRequest(token: string, requestId: string) {
   );
 }
 
-// --------------------------------- Utilities --------------------------------
-
-/** Optional tiny ping you can call from a health screen. */
-export async function pingApi(): Promise<{ ok: true }> {
-  // Try /healthz first, fallback to /health/db if exists
-  try {
-    await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
-  } catch {
-    try {
-      await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 6000 });
-    } catch {}
-  }
-  return { ok: true };
-}
-
 // ---------------------------- Create Request API -----------------------------
+// (Generic sender create remains because you said it works on your server)
 
 export type CreateRequestInput = {
-  type: "package" | "passenger";
+  type: "package" | "ride" | "passenger"; // keep 'passenger' for backward compat
   from_address: string;
   to_address: string;
   window_start: string; // ISO string
@@ -506,6 +522,7 @@ export type CreateRequestResponse = {
   created_at: string; // ISO
 };
 
+/** Sender generic create (kept as-is since it works in your backend) */
 export async function createSenderRequest(
   token: string,
   body: CreateRequestInput
@@ -519,4 +536,19 @@ export async function createSenderRequest(
     timeoutMs: 12000,
     body: JSON.stringify(body),
   });
+}
+
+// --------------------------------- Utilities --------------------------------
+
+/** Optional tiny ping you can call from a health screen. */
+export async function pingApi(): Promise<{ ok: true }> {
+  // Try /healthz first, fallback to /health/db if exists
+  try {
+    await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
+  } catch {
+    try {
+      await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 6000 });
+    } catch {}
+  }
+  return { ok: true };
 }

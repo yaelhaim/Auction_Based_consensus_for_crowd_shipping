@@ -1,10 +1,5 @@
 // app/rider_request_create.tsx
-// Create Ride Request (Rider) — same design as sender:
-// - Soft-mocha cards, stepbar, bottom sticky CTA
-// - One bottom-sheet modal with calendar + time (JS-only)
-// - Fields: from/to, window, seats, notes, max price
-// - Saves to /requests with type: "passenger"
-
+// Create Ride Request (Rider)
 import React, { useState } from "react";
 import {
   View,
@@ -24,7 +19,7 @@ import "dayjs/locale/he";
 
 import { Header } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
-import { createSenderRequest, type CreateRequestInput } from "../lib/api";
+import { createRiderRequest, type CreateRiderPayload } from "../lib/api";
 
 dayjs.locale("he");
 
@@ -84,18 +79,18 @@ export default function RiderRequestCreate() {
     }
     try {
       setSubmitting(true);
-      const payload: CreateRequestInput = {
-        type: "passenger",
+      const payload: CreateRiderPayload = {
         from_address: fromAddress.trim(),
         to_address: toAddress.trim(),
         window_start: startDT!.toISOString(),
         window_end: endDT!.toISOString(),
-        notes: notes.trim() || undefined,
-        max_price: Number(maxPrice),
         passengers: seatsNum,
+        notes: notes.trim() || null,
+        max_price: Number(maxPrice),
       };
-      await createSenderRequest(String(token), payload);
+      await createRiderRequest(String(token), payload);
       Alert.alert("בוצע", "בקשת הטרמפ נשמרה ופורסמה בהצלחה");
+      // חזרה למסך הבית (שם יש useFocusEffect שמרענן אוטומטית)
       router.replace({ pathname: "/rider_home_page", params: { token } });
     } catch (e: any) {
       Alert.alert("שגיאה", e?.message || "יצירת בקשת טרמפ נכשלה");
@@ -109,7 +104,7 @@ export default function RiderRequestCreate() {
   const step2Done = !!(startDT && endDT);
   const step3Done = Number(maxPrice) > 0 && seatsNum >= 1;
 
-  // datepicker styles (highlight selected day immediately)
+  // datepicker styles
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
