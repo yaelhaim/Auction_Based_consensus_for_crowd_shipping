@@ -1,8 +1,7 @@
 // app/role_select.tsx
-// Role selection → navigates to a dynamic route "/[role]/home_page".
-// This avoids TS literal-union issues by using a single literal path with params.
+// Role selection → navigates to "/[role]_home_page".
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   SafeAreaView,
   View,
@@ -10,10 +9,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   useWindowDimensions,
+  Alert,
+  Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import AnimatedBgBlobs from "./components/AnimatedBgBlobs";
+
+// ⬅ חשוב: מאחר והקובץ הזה נמצא תחת app/, הנתיב הוא "./lib/..."
+import { registerAndSyncPushToken, getPushDebugReport } from "../lib/push";
+import { BASE_URL } from "../lib/api";
 
 const COLORS = {
   bg: "#ffffff",
@@ -33,12 +38,39 @@ export default function RoleSelectScreen() {
   const { token } = useLocalSearchParams<{ token?: string }>();
   const [name, setName] = useState<string>("");
 
-  // Responsive card width
+  // למנוע רישום כפול אם המסך נטען שוב
+  const didRegisterRef = useRef(false);
+
+  // רוחב כרטיס רספונסיבי
   const { width } = useWindowDimensions();
   const CARD_W = Math.min(width * 0.92, 480);
 
   useEffect(() => {
-    setName(""); // optionally fetch /me for greeting
+    setName(""); // אפשר בעתיד למשוך /me כדי להציג שם
+  }, [token]);
+
+  // רישום טוקן לשרת אחרי התחברות (פעם אחת)
+  useEffect(() => {
+    (async () => {
+      if (!token || didRegisterRef.current) return;
+      didRegisterRef.current = true;
+      try {
+        console.log(
+          "[PUSH] Post-login: registering Expo token… (platform:",
+          Platform.OS,
+          ")"
+        );
+        const synced = await registerAndSyncPushToken(BASE_URL, String(token));
+        console.log("[PUSH] registerAndSyncPushToken →", synced ?? "(null)");
+        if (!synced) {
+          console.log(
+            "[PUSH] Registration returned null (no token or server error)."
+          );
+        }
+      } catch (e) {
+        console.log("[PUSH] Post-login push registration failed:", e);
+      }
+    })();
   }, [token]);
 
   const goNext = useCallback(
@@ -46,7 +78,6 @@ export default function RoleSelectScreen() {
       try {
         await AsyncStorage.setItem("role_today", role);
       } catch {}
-      // Dynamic path: "/[role]/home_page" + params → role + token
       router.replace({
         pathname: `/${role}_home_page`,
         params: token ? { token: String(token) } : {},
@@ -54,6 +85,16 @@ export default function RoleSelectScreen() {
     },
     [router, token]
   );
+
+  // כפתור בדיקה שמציג דו"ח מלא ב-Alert (ללא תלות בלוגים)
+  const runPushDebug = useCallback(async () => {
+    try {
+      const report = await getPushDebugReport();
+      Alert.alert("Push Debug", report);
+    } catch (e) {
+      Alert.alert("Push Debug", String(e));
+    }
+  }, []);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -88,6 +129,22 @@ export default function RoleSelectScreen() {
             accent={COLORS.primaryDark}
             onPress={() => goNext("courier")}
           />
+
+          {/* כפתור בדיקת פוש – מציג דו״ח מלא */}
+          <TouchableOpacity
+            onPress={runPushDebug}
+            style={{
+              marginTop: 12,
+              alignSelf: "center",
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderWidth: 1,
+              borderRadius: 10,
+              borderColor: COLORS.border,
+            }}
+          >
+            <Text style={{ color: COLORS.text }}>בדיקת פוש (מציג דו״ח)</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
@@ -194,5 +251,4 @@ const styles = StyleSheet.create({
     color: COLORS.dim,
     writingDirection: "rtl",
   },
-  hint: { marginTop: 10, textAlign: "center", color: COLORS.dim, fontSize: 12 },
 });

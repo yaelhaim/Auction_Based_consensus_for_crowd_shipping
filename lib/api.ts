@@ -3,7 +3,7 @@
 // - One BASE_URL for all calls
 // - Strong logging (method, URL, body, status)
 // - Timeouts + better error messages
-// - Types aligned with DB (requests incl. max_price & pickup_contact_*)
+// - Types aligned with DB & server routes (requests, offers, auction, devices)
 
 import Constants from "expo-constants";
 
@@ -73,7 +73,7 @@ export type ListOpts = { limit?: number; offset?: number };
 /** Unified status type across app. */
 export type CommonStatus =
   | "open"
-  | "assigned" // we use 'assigned' instead of legacy 'matched'
+  | "assigned"
   | "in_transit"
   | "completed"
   | "cancelled";
@@ -213,13 +213,41 @@ export async function upsertProfile(
   });
 }
 
+/**
+ * Register Expo push token for current user.
+ * NOTE: server supports BOTH shapes:
+ *  - { expo_push_token: string }  (your legacy call)
+ *  - { provider: "expo", token: string }  (new unified)
+ */
+export async function registerPushToken(
+  token: string,
+  expoPushToken: string
+): Promise<void> {
+  const res = await fetchWithTimeout(`${BASE_URL}/devices/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({ expo_push_token: expoPushToken }),
+    timeoutMs: 10000,
+  });
+  if (!res.ok && res.status !== 204) {
+    let txt = "";
+    try {
+      txt = await res.text();
+    } catch {}
+    throw new Error(`registerPushToken failed: ${res.status} ${txt}`);
+  }
+}
+
 // --------------------------- Sender (packages) ------------------------------
 
-/** A request created by a sender. */
+/** A request created by a sender or rider. */
 export type RequestRow = {
   id: string;
   owner_user_id: string;
-  type: "package" | "ride"; // keep 'ride' for compatibility where screens check it
+  type: "package" | "ride" | "passenger"; // include passenger
   from_address: string;
   from_lat?: number | null;
   from_lon?: number | null;
@@ -270,7 +298,6 @@ export async function listSenderRequests(
     `${BASE_URL}/sender/requests?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
-  // normalize status just in case
   return rows.map((r) => ({
     ...r,
     status: normalizeStatus(r.status),
@@ -367,7 +394,7 @@ export async function createCourierOffer(
   }
 ) {
   return jsonFetch<{ id: string; status: string; created_at: string }>(
-    `${BASE_URL}/courier/offers`,
+    `${BASE_URL}/offers`, // <-- routes_offers.py mounts at /offers
     {
       method: "POST",
       headers: {
@@ -389,10 +416,10 @@ export type CourierOfferRow = {
   to_address?: string | null;
   window_start?: string | null; // ISO
   window_end?: string | null; // ISO
-  min_price: string; // מגיע כטקסט מה-API (NUMERIC), תרצי -> parseFloat
+  min_price: string; // NUMERIC → string from API
   types: ("package" | "passenger")[];
   notes?: string | null;
-  status: "active" | "paused" | "completed" | "cancelled";
+  status: "active" | "paused" | "completed" | "cancelled" | "assigned";
   created_at: string; // ISO
   updated_at: string; // ISO
 };
@@ -407,7 +434,7 @@ export async function listMyCourierOffers(
     offset: String(opts.offset ?? 0),
   });
   return jsonFetch<CourierOfferRow[]>(
-    `${BASE_URL}/courier/offers?${q.toString()}`,
+    `${BASE_URL}/offers?${q.toString()}`, // <-- GET /offers for current driver
     {
       headers: { ...authHeaders(token) },
       timeoutMs: 12000,
@@ -497,10 +524,9 @@ export async function riderCancelRequest(token: string, requestId: string) {
 }
 
 // ---------------------------- Create Request API -----------------------------
-// (Generic sender create remains because you said it works on your server)
 
 export type CreateRequestInput = {
-  type: "package" | "ride" | "passenger"; // keep 'passenger' for backward compat
+  type: "package" | "ride" | "passenger";
   from_address: string;
   to_address: string;
   window_start: string; // ISO string
@@ -522,7 +548,6 @@ export type CreateRequestResponse = {
   created_at: string; // ISO
 };
 
-/** Sender generic create (kept as-is since it works in your backend) */
 export async function createSenderRequest(
   token: string,
   body: CreateRequestInput
@@ -538,11 +563,29 @@ export async function createSenderRequest(
   });
 }
 
+// -------------------------------- Auctions ----------------------------------
+
+export type AuctionClearResponse = {
+  cleared: boolean;
+  matches?: { request_id: string; driver_user_id: string }[];
+  reason?: string;
+  objective?: any;
+  debug?: any;
+};
+
+/** Call your backend /auction/clear (no auth required by your server design). */
+export async function clearAuctionsNow(): Promise<AuctionClearResponse> {
+  return jsonFetch<AuctionClearResponse>(`${BASE_URL}/auction/clear`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    timeoutMs: 15000,
+  });
+}
+
 // --------------------------------- Utilities --------------------------------
 
 /** Optional tiny ping you can call from a health screen. */
 export async function pingApi(): Promise<{ ok: true }> {
-  // Try /healthz first, fallback to /health/db if exists
   try {
     await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
   } catch {

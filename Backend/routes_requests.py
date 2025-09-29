@@ -5,19 +5,18 @@ from typing import Literal, Optional
 from datetime import datetime
 from decimal import Decimal
 
-# נסה לייבא את get_db מאיפה שקיים אצלך (יש פרויקט עם שתי מיקומים אפשריים)
-try:
-    from .Database.db import get_db
-except Exception:
-    from .Database.db import get_db  # fallback אם יש db.py בשורש Backend
+# db session
+from .Database.db import get_db
 
-# ה־dependency שמחזיר את המשתמש הנוכחי
-from .auth_dep import get_current_user  # השאר כפי שקיים אצלך
+# current user dep (כבר קיים אצלך)
+from .auth_dep import get_current_user
+
+# server-side geocoding
+from .services.geocoding import geocode_address
 
 router = APIRouter(prefix="", tags=["requests"])
 
 # ---------- Pydantic v2 input model ----------
-
 class RequestCreate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -28,11 +27,11 @@ class RequestCreate(BaseModel):
     window_end: datetime
 
     notes: Optional[str] = None
-    max_price: Decimal = Field(..., gt=0)  # תואם DB NUMERIC(10,2)
+    max_price: Decimal = Field(..., gt=0, max_digits=10, decimal_places=2)
     pickup_contact_name: Optional[str] = Field(None, max_length=100)
     pickup_contact_phone: Optional[str] = Field(None, max_length=32)
 
-    # אופציונלי – קואורדינטות/נוסעים
+    # Optional client-provided coords; server will fill if missing
     from_lat: Optional[float] = None
     from_lon: Optional[float] = None
     to_lat: Optional[float] = None
@@ -48,9 +47,8 @@ class RequestCreate(BaseModel):
         return v
 
 # ---------- Helper ----------
-
 def _user_id(u) -> str:
-    """תומך גם במילון וגם באובייקט."""
+    """Supports both dict and object user representations."""
     if hasattr(u, "id"):
         return getattr(u, "id")
     if isinstance(u, dict):
@@ -58,7 +56,6 @@ def _user_id(u) -> str:
     return None
 
 # ---------- Routes ----------
-
 @router.post("/requests", status_code=status.HTTP_201_CREATED)
 async def create_request(
     payload: RequestCreate,
@@ -69,29 +66,44 @@ async def create_request(
     if not uid:
         raise HTTPException(status_code=401, detail="Unauthorized (no user id)")
 
-    # בניית הפרמטרים לשאילתא
+    # If coords missing -> geocode on server
+    from_lat = payload.from_lat
+    from_lon = payload.from_lon
+    to_lat = payload.to_lat
+    to_lon = payload.to_lon
+
+    if from_lat is None or from_lon is None:
+        src = geocode_address(payload.from_address)
+        if src is None:
+            raise HTTPException(400, detail="Could not geocode from_address")
+        from_lat, from_lon = src
+
+    if to_lat is None or to_lon is None:
+        dst = geocode_address(payload.to_address)
+        if dst is None:
+            raise HTTPException(400, detail="Could not geocode to_address")
+        to_lat, to_lon = dst
+
     params = {
         "owner_user_id": uid,
         "type": payload.type,
         "from_address": payload.from_address,
-        "from_lat": payload.from_lat,
-        "from_lon": payload.from_lon,
+        "from_lat": from_lat,
+        "from_lon": from_lon,
         "to_address": payload.to_address,
-        "to_lat": payload.to_lat,
-        "to_lon": payload.to_lon,
+        "to_lat": to_lat,
+        "to_lon": to_lon,
         "passengers": payload.passengers,
         "notes": payload.notes,
         "window_start": payload.window_start,
         "window_end": payload.window_end,
         "status": "open",
-        "max_price": str(payload.max_price),  # ל-psycopg נוח כטקסט
+        "max_price": str(payload.max_price),  # psycopg-friendly
         "pickup_contact_name": payload.pickup_contact_name,
         "pickup_contact_phone": payload.pickup_contact_phone,
     }
 
-    # SQLAlchemy Core – text(). אם יש לך helper אחר, אפשר להתאים.
     from sqlalchemy import text
-
     sql = text("""
         INSERT INTO requests (
             owner_user_id, type,
@@ -111,20 +123,17 @@ async def create_request(
         RETURNING id, status, created_at
     """)
 
-    # תמיכה גם ב-async וגם ב-sync session לפי מה שיש אצלך ב-get_db
     try:
-        if hasattr(db, "execute"):  # sync/engine.connect()
+        if hasattr(db, "execute"):
             result = db.execute(sql, params)
             row = result.mappings().first()
             if hasattr(db, "commit"):
                 db.commit()
         else:
-            # הנחה: get_db מחזיר AsyncSession
             res = await db.execute(sql, params)
             row = res.mappings().first()
             await db.commit()
     except Exception as e:
-        # לוג נוח לבדיקה
         print("[/requests] insert error:", repr(e))
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -133,7 +142,6 @@ async def create_request(
 
     return {"id": str(row["id"]), "status": row["status"], "created_at": row["created_at"]}
 
-# בריאות שרת (נוח לבדיקה מהלקוח)
 @router.get("/healthz")
 def healthz():
     return {"ok": True}

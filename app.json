@@ -2,30 +2,41 @@
   "expo": {
     "name": "BidDrop",
     "slug": "BidDrop",
+    "scheme": "biddrop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "biddrop",
+    "splash": {
+      "image": "./assets/images/SplashScreen.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#ffffff"
+    },
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
     "extra": {
-      "wcProjectId": "${EXPO_PUBLIC_WC_PROJECT_ID}",
       "router": {},
-      "eas": { "projectId": "ba9c100f-a0df-467a-ab24-8ed14b5a8ae6" }
+      "eas": {
+        "projectId": "ba9c100f-a0df-467a-ab24-8ed14b5a8ae6"
+      },
+      "wcProjectId": "${EXPO_PUBLIC_WC_PROJECT_ID}"
     },
+
+    "plugins": [
+      "expo-router",
+      "expo-splash-screen",
+      "expo-font",
+      "expo-web-browser",
+      "expo-notifications"
+    ],
+
+    "experiments": { "typedRoutes": true },
+
     "ios": {
       "bundleIdentifier": "com.biddrop.app",
-      "icon": "./assets/images/icon.png",
-      "infoPlist": {
-        "LSApplicationQueriesSchemes": [
-          "subwallet",
-          "https",
-          "app.subwallet.mobile",
-          "wc"
-        ],
-        "ITSAppUsesNonExemptEncryption": false
-      }
+      "supportsTablet": true
     },
+
     "android": {
       "package": "com.biddrop.app",
       "adaptiveIcon": {
@@ -33,38 +44,20 @@
         "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
+      "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {
           "action": "VIEW",
           "category": ["BROWSABLE", "DEFAULT"],
-          "data": [
-            { "scheme": "biddrop" },
-            { "scheme": "subwallet" },
-            { "scheme": "app.subwallet.mobile" }
-          ]
+          "data": [{ "scheme": "biddrop" }]
         }
-      ],
-      "queries": [
-        { "scheme": "subwallet" },
-        { "scheme": "app.subwallet.mobile" }
       ]
     },
+
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/icon.png"
-    },
-    "splash": {
-      "image": "./assets/images/SplashScreen.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#ffffff"
-    },
-    "plugins": [
-      "expo-router",
-      "expo-splash-screen",
-      "expo-font",
-      "expo-web-browser"
-    ],
-    "experiments": { "typedRoutes": true }
+    }
   }
 }

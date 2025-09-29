@@ -1,12 +1,31 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "jsx": "react",
-    "types": ["expo-router/types"],
+    "jsx": "react-jsx",
     "strict": true,
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "noEmit": true,
+    "paths": { "@/*": ["./*"] },
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "typeRoots": ["./types", "./node_modules/@types"]
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+  "include": [
+    "app",
+    "app/**/*",
+    "src",
+    "src/**/*",
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "build",
+    "**/__mocks__/*",
+    "**/__tests__/*",
+    "**/__rsc_tests__/*"
+  ]
 }

@@ -1,10 +1,17 @@
+// app/_layout.tsx
 import "react-native-get-random-values";
 import "react-native-url-polyfill/auto";
 
+import React, { useEffect } from "react";
 import { Stack } from "expo-router";
-import React from "react";
+import { ensurePushSetup } from "../lib/push";
 
 export default function Layout() {
+  // פעם אחת באתחול — הרשאות + Android channel
+  useEffect(() => {
+    ensurePushSetup();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerTitleAlign: "center" }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />

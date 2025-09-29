@@ -1,3 +1,4 @@
+// app/courier_home_page.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
@@ -7,9 +8,12 @@ import {
   RefreshControl,
   TouchableOpacity,
   Alert,
+  Dimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+
 import {
   getMyProfile,
   getCourierMetrics,
@@ -20,39 +24,30 @@ import {
   type CourierBucket,
   type CourierOfferRow,
 } from "../lib/api";
-import {
-  Header,
-  KPI,
-  HeroCard,
-  RewardBanner,
-  ListCard,
-} from "./components/Primitives";
+import { ListCard, ActionBanner } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
+
+const H = Dimensions.get("window").height;
 
 export default function CourierHome() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
   const [tab, setTab] = useState<CourierBucket>("available");
 
   const [jobs, setJobs] = useState<CourierJobRow[]>([]);
   const [offers, setOffers] = useState<CourierOfferRow[]>([]);
   const [metrics, setMetrics] = useState<CourierMetrics | null>(null);
-
-  // KPI חדש: כמה זמינויות פעילות יש לי כרגע (courier_offers.status='active')
-  const [offersActiveCount, setOffersActiveCount] = useState<number>(0);
+  const [offersActiveCount, setOffersActiveCount] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ---------- loaders ----------
-  // טען תמיד: metrics (jobs) + ספירת זמינויות פעילות
   const loadKpis = useCallback(async () => {
     if (!token) return;
     const [m, myActiveOffers] = await Promise.all([
       getCourierMetrics(String(token)),
-      // נטען רק את הפעילות כדי לספור ל-KPI; limit גבוה כדי לכסות בקלות
       listMyCourierOffers(String(token), {
         status: "active",
         limit: 200,
@@ -63,17 +58,13 @@ export default function CourierHome() {
     setOffersActiveCount(myActiveOffers.length);
   }, [token]);
 
-  // טען תוכן לפי טאב (רשימות)
   const loadForTab = useCallback(
     async (b: CourierBucket) => {
       if (!token) return;
       setLoading(true);
       try {
-        // נתחיל מקופסאות ה-KPI כדי שתהיה תחושה מהירה של עדכון
         await loadKpis();
-
         if (b === "available") {
-          // לטאב זמינות: מציגים את ההצעות שלי (כל הסטטוסים, לפי תאריך)
           const myOffers = await listMyCourierOffers(String(token), {
             limit: 50,
             offset: 0,
@@ -81,7 +72,6 @@ export default function CourierHome() {
           setOffers(myOffers);
           setJobs([]);
         } else {
-          // לטאבים פעילות/הושלמו: מציגים Jobs
           const list = await listCourierJobs(String(token), b);
           setJobs(list);
           setOffers([]);
@@ -101,7 +91,7 @@ export default function CourierHome() {
     (async () => {
       if (!token) return;
       const me = await getMyProfile(String(token));
-      setName(me?.first_name || "");
+      setFirstName(me?.first_name || "");
     })();
   }, [token]);
 
@@ -111,7 +101,6 @@ export default function CourierHome() {
 
   useFocusEffect(
     useCallback(() => {
-      // רענון אוטומטי כשחוזרים למסך (למשל אחרי יצירת זמינות)
       loadAll();
     }, [loadAll])
   );
@@ -122,8 +111,7 @@ export default function CourierHome() {
     setRefreshing(false);
   }, [loadAll]);
 
-  // ---------- UI helpers ----------
-  const tabLabel = useMemo(
+  const tabTitle = useMemo(
     () =>
       tab === "available" ? "זמינות" : tab === "active" ? "פעילות" : "הושלמו",
     [tab]
@@ -165,123 +153,131 @@ export default function CourierHome() {
     };
   }
 
-  const latestOffer = offers[0];
-  const latestJob = jobs[0];
-  const heroTitle = tab === "available" ? "הזמינות האחרונה" : "המשימה האחרונה";
-  const heroIdText =
-    tab === "available"
-      ? offerRange(latestOffer?.window_start, latestOffer?.window_end) || "—"
-      : latestJob?.id
-      ? `ID: ${latestJob.id}`
-      : "ID: —";
+  const Header = (
+    <>
+      <View style={[S.topPanel, { minHeight: H * 0.46 }]}>
+        <View style={S.avatarWrap}>
+          <View style={S.avatarCircle}>
+            <Ionicons name="person" size={30} color={COLORS.text} />
+          </View>
+        </View>
+
+        <Text style={S.hello}>
+          היי{firstName ? `, ${firstName}` : ""}{" "}
+          <Text style={{ fontWeight: "700", color: COLORS.primaryDark }}></Text>
+        </Text>
+
+        {/* KPI Pills — זמינות/בביצוע/הושלמו */}
+        <View style={S.kpiBarPinned}>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{offersActiveCount}</Text>
+            <Text style={S.kpiPillLabel}>זמינות</Text>
+          </View>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{metrics?.active_count ?? 0}</Text>
+            <Text style={S.kpiPillLabel}>בביצוע</Text>
+          </View>
+          <View style={S.kpiPill}>
+            <Text style={S.kpiPillVal}>{metrics?.delivered_count ?? 0}</Text>
+            <Text style={S.kpiPillLabel}>הושלמו</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* אריחי פעולה — כמו אצל השולחת */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+        <ActionBanner
+          title="צפייה בזמינויות"
+          subtitle="הזמנויות חדשות לאיסוף"
+          active={tab === "available"}
+          onPress={() => setTab("available")}
+        />
+        <ActionBanner
+          title="צפייה במשימות פעילות"
+          subtitle="משימות ששובצו/בדרך"
+          active={tab === "active"}
+          onPress={() => setTab("active")}
+        />
+        <ActionBanner
+          title="צפייה במשימות שהושלמו"
+          subtitle="היסטוריית ביצועים"
+          active={tab === "delivered"}
+          onPress={() => setTab("delivered")}
+        />
+
+        <Text style={S.sectionTitle}>רשימת {tabTitle}</Text>
+      </View>
+    </>
+  );
 
   return (
     <View style={S.screen}>
-      <Header
-        title={`היי${name ? `, ${name}` : ""}`}
-        subtitle="ברוכים הבאים למסך הבית של השליחים"
-      />
-
-      {/* KPIs */}
-      <View style={S.kpiRow}>
-        {/* ← עכשיו הקופסה הראשונה מציגה את מספר הזמינויות הפעילות מה-courier_offers */}
-        <KPI title="זמינות" value={offersActiveCount} />
-        <KPI title="בביצוע" value={metrics?.active_count ?? 0} />
-        <KPI title="הושלמו" value={metrics?.delivered_count ?? 0} />
-      </View>
-
-      {/* Tabs (כמו אצל השולח/ריידר) */}
-      <View style={S.tabs}>
-        {(["available", "active", "delivered"] as CourierBucket[]).map((b) => (
-          <TouchableOpacity
-            key={b}
-            onPress={() => setTab(b)}
-            style={[S.tabBtn, tab === b && S.tabBtnActive]}
-          >
-            <Text style={[S.tabTxt, tab === b && S.tabTxtActive]}>
-              {b === "available"
-                ? "זמינות"
-                : b === "active"
-                ? "פעילות"
-                : "הושלמו"}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Hero + Tip */}
-      <HeroCard
-        title={heroTitle}
-        idText={heroIdText}
-        tone="mocha"
-        style={{ marginTop: 10 }}
-      />
-      <RewardBanner
-        title={smartTip().title}
-        subtitle={smartTip().subtitle}
-        tone="primary"
-      />
-
-      {/* Lists — FlatList נפרד לכל טיפוס כדי לפתור TS */}
+      {/* Lists */}
       {tab === "available" ? (
         <FlatList<CourierOfferRow>
           data={offers}
           keyExtractor={(it) => it.id}
-          contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
+          contentContainerStyle={{ paddingBottom: 72 }}
+          ListHeaderComponent={Header}
+          renderItem={({ item }) => (
+            <View style={{ paddingHorizontal: 16 }}>
+              <ListCard
+                title={`${item.from_address} → ${item.to_address || "כל יעד"}`}
+                subtitle={`${offerRange(
+                  item.window_start,
+                  item.window_end
+                )} • סטטוס: ${item.status} • סוגים: ${item.types.join(", ")}`}
+                tone="primary"
+              />
+            </View>
+          )}
           ListEmptyComponent={
             <Text style={S.empty}>
               {loading ? "טוען…" : `אין פריטים בקטגוריה "זמינות"`}
             </Text>
           }
-          renderItem={({ item }) => (
-            <ListCard
-              title={`${item.from_address} → ${item.to_address || "כל יעד"}`}
-              subtitle={`${offerRange(
-                item.window_start,
-                item.window_end
-              )} • סטטוס: ${item.status} • סוגים: ${item.types.join(", ")}`}
-              tone="primary"
-            />
-          )}
         />
       ) : (
         <FlatList<CourierJobRow>
           data={jobs}
           keyExtractor={(it) => it.id}
-          contentContainerStyle={{ paddingTop: 10, paddingBottom: 140 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
+          contentContainerStyle={{ paddingBottom: 72 }}
+          ListHeaderComponent={Header}
+          renderItem={({ item }) => (
+            <View style={{ paddingHorizontal: 16 }}>
+              <ListCard
+                title={`${item.from_address} → ${item.to_address}`}
+                subtitle={`${fmtWindow(
+                  item.window_start,
+                  item.window_end
+                )} • ${statusLabel(item.status)} • ${
+                  item.type === "package" ? "חבילה" : "טרמפ"
+                }`}
+                tone="primary"
+              />
+            </View>
+          )}
           ListEmptyComponent={
             <Text style={S.empty}>
-              {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabLabel}"`}
+              {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabTitle}"`}
             </Text>
           }
-          renderItem={({ item }) => (
-            <ListCard
-              title={`${item.from_address} → ${item.to_address}`}
-              subtitle={`${fmtWindow(
-                item.window_start,
-                item.window_end
-              )} • ${statusLabel(item.status)} • ${
-                item.type === "package" ? "חבילה" : "טרמפ"
-              }`}
-              tone="primary"
-            />
-          )}
         />
       )}
 
-      {/* Bottom full-width CTA */}
+      {/* כפתור מלא-רוחב דבוק לתחתית */}
       <TouchableOpacity
-        style={S.bottomBar}
-        activeOpacity={0.9}
+        style={S.fullWidthBarBtn}
         onPress={openNewAvailability}
+        activeOpacity={0.9}
       >
-        <Text style={S.bottomBarText}>בדיקת זמינות</Text>
+        <Text style={S.fullWidthBarBtnTxt}>בדיקת זמינות</Text>
       </TouchableOpacity>
     </View>
   );
@@ -337,34 +333,98 @@ function offerRange(s?: string | null, e?: string | null) {
 }
 
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
-  kpiRow: { flexDirection: "row-reverse", marginTop: 4, marginBottom: 10 },
+  screen: { flex: 1, backgroundColor: COLORS.bg },
 
-  // Tabs — אותו עיצוב כמו בשאר הדפים
-  tabs: {
-    flexDirection: "row-reverse",
+  topPanel: {
+    backgroundColor: COLORS.softMocha,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    paddingTop: 32,
+    paddingBottom: 78,
+    paddingHorizontal: 16,
+    position: "relative",
+    alignItems: "center",
+  },
+
+  avatarWrap: {
+    width: "100%",
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  avatarCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: "#fff",
-    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+
+  hello: {
+    marginTop: 8,
+    fontSize: 20,
+    fontWeight: "900",
+    color: COLORS.text,
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+
+  kpiBarPinned: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 30,
+    flexDirection: "row-reverse",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  kpiPill: {
+    width: 92,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    alignItems: "center",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
-    overflow: "hidden",
-    marginTop: 8,
   },
-  tabBtn: { flex: 1, paddingVertical: 10, alignItems: "center" },
-  tabBtnActive: { backgroundColor: COLORS.primary },
-  tabTxt: { color: COLORS.primaryDark, fontWeight: "700" },
-  tabTxtActive: { color: "#fff" },
+  kpiPillVal: { fontWeight: "900", fontSize: 17, textAlign: "center" },
+  kpiPillLabel: {
+    color: COLORS.dim,
+    fontSize: 12,
+    marginTop: 3,
+    textAlign: "center",
+  },
 
-  empty: { textAlign: "center", color: COLORS.dim, marginTop: 18 },
+  sectionTitle: {
+    marginTop: 16,
+    marginBottom: 8,
+    fontWeight: "900",
+    color: COLORS.primaryDark,
+    textAlign: "right",
+  },
 
-  bottomBar: {
+  empty: {
+    textAlign: "center",
+    color: COLORS.dim,
+    marginTop: 18,
+    paddingHorizontal: 16,
+  },
+
+  fullWidthBarBtn: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    paddingVertical: 16,
+    height: 56,
     backgroundColor: COLORS.primary,
     alignItems: "center",
+    justifyContent: "center",
   },
-  bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  fullWidthBarBtnTxt: { color: "#fff", fontWeight: "900", fontSize: 16 },
 });

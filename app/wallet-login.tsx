@@ -1,7 +1,6 @@
 // app/wallet-login.tsx
 // Wallet-based login flow (SubWallet + WalletConnect) with RTL-first UI.
-// Change: after verify, if profile is completed -> navigate to /role(select
-// instead of going straight to /home_page.
+// Change: after verify, if profile is completed -> navigate to /role_select
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +18,11 @@ import * as Linking from "expo-linking";
 import QRCode from "react-native-qrcode-svg";
 import { useRouter } from "expo-router";
 import AnimatedBgBlobs from "./components/AnimatedBgBlobs";
+
+// --- Push notifications (Expo) ---
+import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
+import Constants from "expo-constants";
 
 import {
   connect as wcConnect,
@@ -42,6 +46,42 @@ const COLORS = {
 };
 
 type StepStatus = "done" | "current" | "upcoming";
+
+/* ---------------------- API base (uses EXPO_PUBLIC_POBA_API) ---------------------- */
+const API_BASE =
+  process.env.EXPO_PUBLIC_POBA_API ??
+  (Constants.expoConfig?.extra as any)?.apiBase;
+
+/* ---------------------- Register/Update push token on backend --------------------- */
+async function postRegisterPushToken(jwt: string, expoPushToken: string) {
+  if (!API_BASE) return;
+  await fetch(`${API_BASE}/devices/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({ expo_push_token: expoPushToken }),
+  }).catch(() => {});
+}
+
+/** Ask permission, get Expo push token (no projectId), send to backend. */
+async function registerPushToken(jwt: string) {
+  try {
+    if (!Device.isDevice) return; // simulators often can't receive push
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== "granted") return;
+
+    // No projectId needed here
+    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const expoPushToken = tokenData.data; // "ExponentPushToken[xxxx]"
+    if (expoPushToken) {
+      await postRegisterPushToken(jwt, expoPushToken);
+    }
+  } catch {
+    // best-effort: do not block login if push failed
+  }
+}
 
 export default function WalletLogin() {
   const router = useRouter();
@@ -199,6 +239,9 @@ export default function WalletLogin() {
 
       const tokenStr = String(token);
 
+      // --- Register Expo push token (best-effort) ---
+      await registerPushToken(tokenStr).catch(() => {});
+
       // Check if profile has been completed already
       let completed = false;
       try {
@@ -258,7 +301,7 @@ export default function WalletLogin() {
         </View>
 
         {/* Main card */}
-        <View style={styles.card}>
+        <View className="card" style={styles.card}>
           {!session ? (
             <>
               <Text style={styles.cardTitle}>התחברות עם SubWallet</Text>
