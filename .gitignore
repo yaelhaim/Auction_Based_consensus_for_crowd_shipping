@@ -7,6 +7,7 @@ Backend/.env
 /ios 
 /android
 
+google-services.json
 # Expo
 .expo/
 dist/
