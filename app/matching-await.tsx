@@ -1,21 +1,20 @@
 // app/matching-await.tsx
-import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-} from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import AnimatedBgBlobs from "./components/AnimatedBgBlobs";
-import { deferPushForRequest, checkMatchStatus } from "../lib/api";
+// Waiting screen (sender/rider) with city-map background + white card + hourglass.
+// Logic unchanged: defer push, poll for match, timeout → הודעה.
 
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { deferPushForRequest, checkMatchStatus } from "../lib/api";
+import WaitBackground from "./components/WaitBackground";
+import Hourglass from "./components/Hourglass";
+
+// ⏱ timings (כמו שסיכמנו)
 const POLL_MS = 1500;
 const DEFER_SECONDS = 120;
 const DEFAULT_WAIT_MS = 60000;
 const GRACE_MS = 30000;
+const cityMap = require("../assets/images/city_map_photo.jpg");
 
 export default function MatchingAwait() {
   const router = useRouter();
@@ -50,8 +49,6 @@ export default function MatchingAwait() {
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
-
-      // דוחה פושים בצד השרת – לא קריטי להצגה, אבל שומר התנהגות רצויה
       try {
         const resp = await deferPushForRequest(
           String(token || ""),
@@ -67,13 +64,11 @@ export default function MatchingAwait() {
 
       async function poll() {
         try {
-          // ❗️ זה ה-API החדש שמחזיר בדיוק האם ה-IDA* שיבץ
           const res = await checkMatchStatus(
             String(token || ""),
             String(requestId)
           );
           if (cancelled) return;
-
           if (res?.status === "matched" && res.assignment_id) {
             setAssignmentId(String(res.assignment_id));
             setStatus("matched");
@@ -111,19 +106,25 @@ export default function MatchingAwait() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
   function openAssignment() {
-    // אם יש לכם מסך שיבוץ ייעודי – לנווט אליו; כרגע חוזרים לבית
+    // אם יש מסך התאמה – לנווט אליו; כרגע לדף הבית
     goHome();
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#fff" }}>
-      <AnimatedBgBlobs />
-      <View style={S.box}>
+    <WaitBackground
+      // אם התמונה לא בשם הזה, עדכני: imageUri={require("./assets/your-file.jpg")}
+      imageUri={cityMap}
+      opacity={0.7}
+      blurRadius={2}
+      darken={0.2}
+      tintAlpha={0}
+    >
+      <View style={S.card}>
         {status === "searching" && (
           <>
-            <ActivityIndicator size="large" />
-            <Text style={S.title}>מחפשים לך התאמה…</Text>
-            <Text style={S.sub}>נציג כאן ברגע שהמערכת מצאה שיבוץ.</Text>
+            <Hourglass />
+            <Text style={S.title}>שימי/שימו לב, מחפשים התאמה…</Text>
+            <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>חזרה לדף הבית</Text>
             </TouchableOpacity>
@@ -132,7 +133,8 @@ export default function MatchingAwait() {
 
         {status === "matched" && (
           <>
-            <Text style={S.title}>🎉 נמצאה התאמה!</Text>
+            <Text style={S.bigEmoji}>🎉</Text>
+            <Text style={S.title}>נמצאה התאמה!</Text>
             <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
             <TouchableOpacity style={S.cta} onPress={openAssignment}>
               <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
@@ -145,33 +147,44 @@ export default function MatchingAwait() {
 
         {status === "timeout" && (
           <>
+            <Text style={S.bigEmoji}>⌚</Text>
             <Text style={S.title}>אין התאמה כרגע</Text>
             <Text style={S.sub}>נשלח לך התראה אם תימצא התאמה מאוחר יותר.</Text>
             <TouchableOpacity style={S.cta} onPress={goHome}>
-              <Text style={S.ctaText}>בסדר, חזרה לדף הבית</Text>
+              <Text style={S.ctaText}>חזרה לדף הבית</Text>
             </TouchableOpacity>
           </>
         )}
       </View>
-    </View>
+    </WaitBackground>
   );
 }
 
 const S = StyleSheet.create({
-  box: {
-    flex: 1,
-    paddingHorizontal: 24,
+  card: {
+    width: "92%",
+    maxWidth: 520,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 22,
+    paddingHorizontal: 18,
     alignItems: "center",
-    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
     gap: 10,
   },
+  bigEmoji: { fontSize: 48, marginBottom: 4 },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
-    marginTop: 10,
+    color: "#1f2937",
+    marginTop: 4,
   },
-  sub: { fontSize: 14, opacity: 0.7, textAlign: "center" },
+  sub: { fontSize: 14, opacity: 0.7, textAlign: "center", color: "#334155" },
   cta: {
     backgroundColor: "#9bac70",
     paddingVertical: 12,

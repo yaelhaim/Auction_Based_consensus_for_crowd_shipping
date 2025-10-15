@@ -197,12 +197,12 @@ function statusLabel(s: RiderRequestRow["status"]) {
   return s === "open"
     ? "פתוחה"
     : s === "assigned"
-    ? "שובץ נהג"
-    : s === "in_transit"
-    ? "בדרך"
-    : s === "completed"
-    ? "הושלם"
-    : "בוטל";
+      ? "שובץ נהג"
+      : s === "in_transit"
+        ? "בדרך"
+        : s === "completed"
+          ? "הושלם"
+          : "בוטל";
 }
 function fmtDate(iso?: string | null) {
   if (!iso) return "";
@@ -233,17 +233,23 @@ function fmtWindow(s?: string | null, e?: string | null) {
 const S = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg },
 
+  // FULL-WIDTH mocha section (scrolls with content) with rounded bottom corners
   topPanel: {
     backgroundColor: COLORS.softMocha,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
+    marginTop: 0,
+    marginHorizontal: 0,
     paddingTop: 32,
-    paddingBottom: 78,
+    paddingBottom: 78, // room for KPI pills
     paddingHorizontal: 16,
     position: "relative",
     alignItems: "center",
   },
 
+  // Avatar
   avatarWrap: {
     width: "100%",
     alignItems: "center",
@@ -270,15 +276,16 @@ const S = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.text,
     textAlign: "center",
-    writingDirection: "rtl",
+    writingDirection: "ltr",
   },
 
+  // White KPI pills (slightly raised from bottom)
   kpiBarPinned: {
     position: "absolute",
     left: 16,
     right: 16,
     bottom: 30,
-    flexDirection: "row-reverse",
+    flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
@@ -304,7 +311,7 @@ const S = StyleSheet.create({
     marginBottom: 8,
     fontWeight: "900",
     color: COLORS.primaryDark,
-    textAlign: "right",
+    textAlign: "left",
   },
 
   empty: {
@@ -314,6 +321,7 @@ const S = StyleSheet.create({
     paddingHorizontal: 16,
   },
 
+  // Full-width sticky bottom button (edge-to-edge, no radius)
   fullWidthBarBtn: {
     position: "absolute",
     left: 0,
@@ -324,5 +332,9 @@ const S = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  fullWidthBarBtnTxt: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  fullWidthBarBtnTxt: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 16,
+  },
 });

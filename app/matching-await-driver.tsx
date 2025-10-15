@@ -1,31 +1,24 @@
 // app/matching-await-driver.tsx
-// Driver/Courier waiting screen.
-// בודק סטטוס התאמה דרך /offers/{id}/match_status,
-// ובנוסף נעזר ב-listMyCourierOffers(status='assigned') כדי לאתר אם ההצעה הספציפית כבר הוקצתה.
-// דוחה פושים ל-120ש' ושם דדליין (דקה + 30ש' גרייס כברירת מחדל, או לפי push_defer_until מהשרת).
+// Driver waiting screen with city-map background + white card + hourglass.
+// משתמש ב-listMyCourierOffers כדי לגלות 'assigned' כהצלבה.
 
 import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import AnimatedBgBlobs from "./components/AnimatedBgBlobs";
 import {
   deferPushForOffer,
   checkOfferMatchStatus,
   listMyCourierOffers,
   type CourierOfferRow,
 } from "../lib/api";
+import WaitBackground from "./components/WaitBackground";
+import Hourglass from "./components/Hourglass";
 
-// ⏱ כאן משנים את זמני ההמתנה
-const POLL_MS = 1500; // מרווח בין פולינגים (ms)
-const DEFER_SECONDS = 120; // דחיית פושים בשרת לשניות
-const DEFAULT_WAIT_MS = 60000; // דקה ברירת מחדל אם השרת לא מחזיר push_defer_until
-const GRACE_MS = 30000; // גרייס 30ש'
+const POLL_MS = 1500;
+const DEFER_SECONDS = 120;
+const DEFAULT_WAIT_MS = 60000;
+const GRACE_MS = 30000;
+const cityMap = require("../assets/images/city_map_photo.jpg");
 
 export default function MatchingAwaitDriver() {
   const router = useRouter();
@@ -42,20 +35,15 @@ export default function MatchingAwaitDriver() {
 
   const deadlineRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // יעד דף הבית (אפשר להעביר ב-route פרמטר home אם צריך להתאים)
   const homePath = home || "/courier_home_page";
 
   useEffect(() => {
     let cancelled = false;
 
     async function start() {
-      // קובע דדליין ראשוני
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
-
-      // דוחה פושים בשרת, ואם קיבלנו push_defer_until נעדכן דדליין לפיו
       try {
         const resp = await deferPushForOffer(
           String(token || ""),
@@ -70,14 +58,13 @@ export default function MatchingAwaitDriver() {
       } catch {}
 
       async function poll() {
-        // 1) בדיקה ייעודית של מצב ההתאמה
+        // בדיקה ייעודית
         try {
           const raw = await checkOfferMatchStatus(
             String(token || ""),
             String(offerId)
           );
           if (cancelled) return;
-
           const st = raw?.status;
           const reqId = String(raw?.request_id ?? raw?.requestId ?? "");
           if (st === "matched") {
@@ -87,11 +74,14 @@ export default function MatchingAwaitDriver() {
           }
         } catch {}
 
-        // 2) פולבק פרונטלי: האם ההצעה הזו כבר 'assigned' ברשימת ההצעות שלי?
+        // פולבק: האם ההצעה הזו כבר assigned?
         try {
           const assigned: CourierOfferRow[] = await listMyCourierOffers(
             String(token || ""),
-            { status: "assigned", limit: 50 }
+            {
+              status: "assigned",
+              limit: 50,
+            }
           );
           if (!cancelled && Array.isArray(assigned) && assigned.length > 0) {
             const found = assigned.find(
@@ -104,7 +94,6 @@ export default function MatchingAwaitDriver() {
           }
         } catch {}
 
-        // 3) טיימאאוט
         const stopAt =
           deadlineRef.current ?? Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
         if (Date.now() >= stopAt) {
@@ -128,19 +117,24 @@ export default function MatchingAwaitDriver() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
   function openAssignment() {
-    // אם יש מסך משימה לנהג – לנווט אליו; כרגע חוזרים לבית
+    // אם יש מסך משימה – לנווט אליו; כרגע חוזרים לבית
     goHome();
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#fff" }}>
-      <AnimatedBgBlobs />
-      <View style={S.box}>
+    <WaitBackground
+      imageUri={cityMap}
+      opacity={0.7} // נראה ברור יותר
+      blurRadius={2}
+      darken={0.2} // קונטרסט עדין (אפשר 0.15–0.28 לפי טעם)
+      tintAlpha={0}
+    >
+      <View style={S.card}>
         {status === "searching" && (
           <>
-            <ActivityIndicator size="large" />
+            <Hourglass />
             <Text style={S.title}>מחפשים לך משלוח מתאים…</Text>
-            <Text style={S.sub}>נציג כאן מיד כשיימצא שיבוץ.</Text>
+            <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>חזרה לדף הבית</Text>
             </TouchableOpacity>
@@ -149,7 +143,8 @@ export default function MatchingAwaitDriver() {
 
         {status === "matched" && (
           <>
-            <Text style={S.title}>🎉 נמצאה משימה!</Text>
+            <Text style={S.bigEmoji}>🎉</Text>
+            <Text style={S.title}>נמצאה משימה!</Text>
             <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
             <TouchableOpacity style={S.cta} onPress={openAssignment}>
               <Text style={S.ctaText}>פתח/י את המשימה</Text>
@@ -162,33 +157,44 @@ export default function MatchingAwaitDriver() {
 
         {status === "timeout" && (
           <>
+            <Text style={S.bigEmoji}>⌚</Text>
             <Text style={S.title}>אין התאמה כרגע</Text>
             <Text style={S.sub}>נשלח לך התראה כשיימצא משלוח מתאים.</Text>
             <TouchableOpacity style={S.cta} onPress={goHome}>
-              <Text style={S.ctaText}>בסדר, חזרה לדף הבית</Text>
+              <Text style={S.ctaText}>חזרה לדף הבית</Text>
             </TouchableOpacity>
           </>
         )}
       </View>
-    </View>
+    </WaitBackground>
   );
 }
 
 const S = StyleSheet.create({
-  box: {
-    flex: 1,
-    paddingHorizontal: 24,
+  card: {
+    width: "92%",
+    maxWidth: 520,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 22,
+    paddingHorizontal: 18,
     alignItems: "center",
-    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
     gap: 10,
   },
+  bigEmoji: { fontSize: 48, marginBottom: 4 },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
-    marginTop: 10,
+    color: "#1f2937",
+    marginTop: 4,
   },
-  sub: { fontSize: 14, opacity: 0.7, textAlign: "center" },
+  sub: { fontSize: 14, opacity: 0.7, textAlign: "center", color: "#334155" },
   cta: {
     backgroundColor: "#9bac70",
     paddingVertical: 12,
