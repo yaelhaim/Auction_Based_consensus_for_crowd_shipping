@@ -3,7 +3,7 @@
 // - One BASE_URL for all calls
 // - Strong logging (method, URL, body, status)
 // - Timeouts + better error messages
-// - Types aligned with DB & server routes (requests, offers, auction, devices)
+// - Types aligned with DB (requests incl. max_price & pickup_contact_*)
 
 import Constants from "expo-constants";
 
@@ -73,7 +73,7 @@ export type ListOpts = { limit?: number; offset?: number };
 /** Unified status type across app. */
 export type CommonStatus =
   | "open"
-  | "assigned"
+  | "assigned" // we use 'assigned' instead of legacy 'matched'
   | "in_transit"
   | "completed"
   | "cancelled";
@@ -213,41 +213,13 @@ export async function upsertProfile(
   });
 }
 
-/**
- * Register Expo push token for current user.
- * NOTE: server supports BOTH shapes:
- *  - { expo_push_token: string }  (your legacy call)
- *  - { provider: "expo", token: string }  (new unified)
- */
-export async function registerPushToken(
-  token: string,
-  expoPushToken: string
-): Promise<void> {
-  const res = await fetchWithTimeout(`${BASE_URL}/devices/register`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(token),
-    },
-    body: JSON.stringify({ expo_push_token: expoPushToken }),
-    timeoutMs: 10000,
-  });
-  if (!res.ok && res.status !== 204) {
-    let txt = "";
-    try {
-      txt = await res.text();
-    } catch {}
-    throw new Error(`registerPushToken failed: ${res.status} ${txt}`);
-  }
-}
-
 // --------------------------- Sender (packages) ------------------------------
 
-/** A request created by a sender or rider. */
+/** A request created by a sender. */
 export type RequestRow = {
   id: string;
   owner_user_id: string;
-  type: "package" | "ride" | "passenger"; // include passenger
+  type: "package" | "ride"; // keep 'ride' for compatibility where screens check it
   from_address: string;
   from_lat?: number | null;
   from_lon?: number | null;
@@ -298,6 +270,7 @@ export async function listSenderRequests(
     `${BASE_URL}/sender/requests?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
+  // normalize status just in case
   return rows.map((r) => ({
     ...r,
     status: normalizeStatus(r.status),
@@ -394,7 +367,7 @@ export async function createCourierOffer(
   }
 ) {
   return jsonFetch<{ id: string; status: string; created_at: string }>(
-    `${BASE_URL}/offers`, // <-- routes_offers.py mounts at /offers
+    `${BASE_URL}/courier/offers`,
     {
       method: "POST",
       headers: {
@@ -416,10 +389,11 @@ export type CourierOfferRow = {
   to_address?: string | null;
   window_start?: string | null; // ISO
   window_end?: string | null; // ISO
-  min_price: string; // NUMERIC → string from API
+  min_price: string; // מגיע כטקסט מה-API (NUMERIC), תרצי -> parseFloat
   types: ("package" | "passenger")[];
   notes?: string | null;
-  status: "active" | "paused" | "completed" | "cancelled" | "assigned";
+  // ⬅ הוספתי 'assigned' כדי לשקף את DB בפועל
+  status: "active" | "assigned" | "paused" | "completed" | "cancelled";
   created_at: string; // ISO
   updated_at: string; // ISO
 };
@@ -434,7 +408,7 @@ export async function listMyCourierOffers(
     offset: String(opts.offset ?? 0),
   });
   return jsonFetch<CourierOfferRow[]>(
-    `${BASE_URL}/offers?${q.toString()}`, // <-- GET /offers for current driver
+    `${BASE_URL}/courier/offers?${q.toString()}`,
     {
       headers: { ...authHeaders(token) },
       timeoutMs: 12000,
@@ -524,9 +498,10 @@ export async function riderCancelRequest(token: string, requestId: string) {
 }
 
 // ---------------------------- Create Request API -----------------------------
+// (Generic sender create remains because you said it works on your server)
 
 export type CreateRequestInput = {
-  type: "package" | "ride" | "passenger";
+  type: "package" | "ride" | "passenger"; // keep 'passenger' for backward compat
   from_address: string;
   to_address: string;
   window_start: string; // ISO string
@@ -548,6 +523,7 @@ export type CreateRequestResponse = {
   created_at: string; // ISO
 };
 
+/** Sender generic create (kept as-is since it works in your backend) */
 export async function createSenderRequest(
   token: string,
   body: CreateRequestInput
@@ -564,28 +540,52 @@ export async function createSenderRequest(
 }
 
 // -------------------------------- Auctions ----------------------------------
+// Double auction clearing + optional on-chain close.
+// Uses same jsonFetch + logging/timeout flow as rest of the file.
 
-export type AuctionClearResponse = {
-  cleared: boolean;
-  matches?: { request_id: string; driver_user_id: string }[];
-  reason?: string;
-  objective?: any;
-  debug?: any;
+export type AuctionClearRequest = {
+  request_ids?: string[]; // UUID strings
+  now_ts?: number;
 };
 
-/** Call your backend /auction/clear (no auth required by your server design). */
-export async function clearAuctionsNow(): Promise<AuctionClearResponse> {
-  return jsonFetch<AuctionClearResponse>(`${BASE_URL}/auction/clear`, {
+export type AuctionClearResponse = {
+  ok: boolean;
+  assigned: Record<string, string>; // { request_id: driver_user_id }
+  count: number;
+  message?: string; // "NO_MATCH" etc.
+};
+
+export async function clearAuctions(
+  payload: AuctionClearRequest
+): Promise<AuctionClearResponse> {
+  return jsonFetch<AuctionClearResponse>(`${BASE_URL}/auctions/clear`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    timeoutMs: 15000,
+    body: JSON.stringify(payload),
+    timeoutMs: 12000,
   });
+}
+
+export async function closeAuctionOnchain(payload: {
+  auction_id: string; // UUID as string
+  winner_ss58?: string;
+}): Promise<{ ok: boolean; job_id: string }> {
+  return jsonFetch<{ ok: boolean; job_id: string }>(
+    `${BASE_URL}/auctions/close`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: 12000,
+    }
+  );
 }
 
 // --------------------------------- Utilities --------------------------------
 
 /** Optional tiny ping you can call from a health screen. */
 export async function pingApi(): Promise<{ ok: true }> {
+  // Try /healthz first, fallback to /health/db if exists
   try {
     await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
   } catch {
@@ -594,4 +594,71 @@ export async function pingApi(): Promise<{ ok: true }> {
     } catch {}
   }
   return { ok: true };
+}
+
+/** Defer push notifications for a request and return the defer-until timestamp (ISO) */
+export async function deferPushForRequest(
+  token: string,
+  requestId: string,
+  seconds = 60
+) {
+  const url = `${BASE_URL}/requests/${encodeURIComponent(requestId)}/defer_push?seconds=${seconds}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  // השרת מחזיר { ok: true, push_defer_until: "<iso>" }
+  if (!res.ok) return null;
+  try {
+    return (await res.json()) as { ok: boolean; push_defer_until?: string };
+  } catch {
+    return null;
+  }
+}
+
+/** Poll match status for a given request (owner side). */
+export async function checkMatchStatus(token: string, requestId: string) {
+  const url = `${BASE_URL}/requests/${encodeURIComponent(requestId)}/match_status`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return { status: "pending" as const };
+  try {
+    return await res.json();
+  } catch {
+    return { status: "pending" as const };
+  }
+}
+
+/** Defer push notifications for an offer and return the defer-until timestamp (ISO) */
+export async function deferPushForOffer(
+  token: string,
+  offerId: string,
+  seconds = 60
+) {
+  const url = `${BASE_URL}/offers/${encodeURIComponent(offerId)}/defer_push?seconds=${seconds}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  try {
+    return (await res.json()) as { ok: boolean; push_defer_until?: string };
+  } catch {
+    return null;
+  }
+}
+
+/** Poll match status for a given offer (driver side). */
+export async function checkOfferMatchStatus(token: string, offerId: string) {
+  const url = `${BASE_URL}/offers/${encodeURIComponent(offerId)}/match_status`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return { status: "pending" as const };
+  try {
+    return await res.json();
+  } catch {
+    return { status: "pending" as const };
+  }
 }

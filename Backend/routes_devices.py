@@ -35,10 +35,6 @@ def register_device(
     db: Session = Depends(get_db),
     user = Depends(get_current_user),
 ):
-    """
-    שומר את הטוקן של המשתמש בטבלת users.expo_push_token (זה מה שהאוכשן קורא).
-    אם קיים DeviceToken – גם נעדכן/נוסיף שם (לא חובה כדי שהפושים יעבדו).
-    """
     # חלץ user_id גם אם user הוא dict
     user_id = str(user["id"] if isinstance(user, dict) else getattr(user, "id"))
 

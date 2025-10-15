@@ -28,6 +28,19 @@ function fmt(dt?: Date | null) {
   return dayjs(dt).format("DD.MM.YYYY HH:mm");
 }
 
+// נסיון לחלץ מזהה בקשה ממבני תשובה שונים
+function pickRequestId(res: any): string | null {
+  if (!res) return null;
+  if (typeof res === "string") return res;
+  if (typeof res?.id !== "undefined") return String(res.id);
+  if (typeof res?.request_id !== "undefined") return String(res.request_id);
+  if (typeof res?.requestId !== "undefined") return String(res.requestId);
+  if (typeof res?.data?.id !== "undefined") return String(res.data.id);
+  if (typeof res?.data?.request_id !== "undefined")
+    return String(res.data.request_id);
+  return null;
+}
+
 export default function RiderRequestCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
@@ -88,10 +101,26 @@ export default function RiderRequestCreate() {
         notes: notes.trim() || null,
         max_price: Number(maxPrice),
       };
-      await createRiderRequest(String(token), payload);
-      Alert.alert("בוצע", "בקשת הטרמפ נשמרה ופורסמה בהצלחה");
-      // חזרה למסך הבית (שם יש useFocusEffect שמרענן אוטומטית)
-      router.replace({ pathname: "/rider_home_page", params: { token } });
+
+      // שולחים לשרת
+      const res = await createRiderRequest(String(token), payload);
+      const requestId = pickRequestId(res);
+
+      if (!requestId) {
+        // אם אין לנו מזהה בקשה, אין לנו איך להציג מסך המתנה — נודיע למשתמש
+        Alert.alert(
+          "בקשה נשמרה",
+          "הבקשה נשמרה, אך לא קיבלנו מזהה בקשה להצגת מסך ההמתנה. נחזיר לדף הבית."
+        );
+        router.replace({ pathname: "/rider_home_page", params: { token } });
+        return;
+      }
+
+      // ניווט למסך ההמתנה שמבצע דחיית פוש + פולינג להתאמה
+      router.replace({
+        pathname: "/matching-await",
+        params: { requestId, token, role: "rider" },
+      });
     } catch (e: any) {
       Alert.alert("שגיאה", e?.message || "יצירת בקשת טרמפ נכשלה");
     } finally {

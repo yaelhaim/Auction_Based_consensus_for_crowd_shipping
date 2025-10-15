@@ -1,10 +1,7 @@
+// app/sender_request_create.tsx
 // Modern "Create Request (Sender)" screen
-// - Soft-mocha cards
-// - One bottom-sheet modal with calendar + time (JS-only)
-// - Selected day highlight (styles + useDefaultStyles)
-// - Default: pickupBy = "other" (requires name+phone), can switch to "me"
-// - Loading state on publish
-// - RTL-friendly
+// - Navigates to /matching-await after successful publish (instead of sender home)
+// - Uses pickRequestId() to extract id from API response
 
 import React, { useState } from "react";
 import {
@@ -32,6 +29,19 @@ dayjs.locale("he");
 function fmt(dt?: Date | null) {
   if (!dt) return "";
   return dayjs(dt).format("DD.MM.YYYY HH:mm");
+}
+
+// Try to extract request id from various response shapes
+function pickRequestId(res: any): string | null {
+  if (!res) return null;
+  if (typeof res === "string") return res;
+  if (typeof res?.id !== "undefined") return String(res.id);
+  if (typeof res?.request_id !== "undefined") return String(res.request_id);
+  if (typeof res?.requestId !== "undefined") return String(res.requestId);
+  if (typeof res?.data?.id !== "undefined") return String(res.data.id);
+  if (typeof res?.data?.request_id !== "undefined")
+    return String(res.data.request_id);
+  return null;
 }
 
 export default function SenderRequestCreate() {
@@ -103,9 +113,26 @@ export default function SenderRequestCreate() {
         pickup_contact_phone:
           pickupBy === "other" ? pickupPhone.trim() : undefined,
       };
-      await createSenderRequest(String(token), payload);
-      Alert.alert("בוצע", "הבקשה נשמרה ופורסמה בהצלחה");
-      router.replace({ pathname: "/sender_home_page", params: { token } });
+
+      // Send to backend
+      const res = await createSenderRequest(String(token), payload);
+      const requestId = pickRequestId(res);
+
+      if (!requestId) {
+        // Fallback if API didn't return an id
+        Alert.alert(
+          "בקשה נשמרה",
+          "הבקשה נשמרה, אך לא קיבלנו מזהה בקשה להצגת מסך ההמתנה. נחזיר לדף הבית."
+        );
+        router.replace({ pathname: "/sender_home_page", params: { token } });
+        return;
+      }
+
+      // Navigate to the waiting screen (defers push + polling there)
+      router.replace({
+        pathname: "/matching-await",
+        params: { requestId, token, role: "sender" },
+      });
     } catch (e: any) {
       Alert.alert("שגיאה", e?.message || "יצירת הבקשה נכשלה");
     } finally {
@@ -336,8 +363,8 @@ export default function SenderRequestCreate() {
             onChange={(p: any) => p?.date && setTempDT(p.date)}
             timePicker
             locale="he"
-            firstDayOfWeek={0} // Sunday
-            navigationPosition="around" // arrows on both sides (fits RTL)
+            firstDayOfWeek={0}
+            navigationPosition="around"
             styles={dpStyles}
           />
 
@@ -365,11 +392,7 @@ const S = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
 
   // Stepbar (RTL)
-  stepbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
+  stepbar: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   stepItem: { flexDirection: "row", alignItems: "center", flex: 1 },
   stepCircle: {
     width: 28,

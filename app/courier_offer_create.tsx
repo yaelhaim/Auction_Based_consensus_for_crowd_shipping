@@ -95,9 +95,15 @@ export default function CourierOfferCreate() {
         types,
         notes: notes.trim() || undefined,
       };
-      await createCourierOffer(String(token), payload);
+      const { id: createdOfferId } = await createCourierOffer(
+        String(token),
+        payload
+      );
       Alert.alert("בוצע", "הצעת השליח פורסמה בהצלחה");
-      router.replace({ pathname: "/courier_home_page", params: { token } });
+      router.replace({
+        pathname: "/matching-await-driver",
+        params: { offerId: createdOfferId, token },
+      });
     } catch (e: any) {
       Alert.alert("שגיאה", e?.message || "יצירת הצעת שליח נכשלה");
     } finally {

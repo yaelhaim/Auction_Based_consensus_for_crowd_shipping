@@ -1,5 +1,6 @@
 # app/auction/routes_auction.py
-# Clearing via IDA* using courier_offers (supply). Sends push notifications on matches.
+# Clearing via IDA* using courier_offers (supply). Sends push notifications on matches,
+# BUT only if now >= requests.push_defer_until (defer window set by the client).
 
 from __future__ import annotations
 from fastapi import APIRouter, Depends
@@ -29,6 +30,25 @@ except Exception:
     from Backend.services.push import send_expo_async, fire_and_forget  # type: ignore
 
 router = APIRouter(prefix="/auction", tags=["auction"])
+
+
+def _should_send_push_request(db: Session, request_id: str) -> bool:
+    row = db.execute(text("SELECT push_defer_until FROM requests WHERE id = :rid"), {"rid": request_id}).mappings().first()
+    if not row: return True
+    ts = row.get("push_defer_until")
+    if ts is None: return True
+    return datetime.now(timezone.utc) >= ts
+
+def _should_send_push_driver(db: Session, driver_user_id: str) -> bool:
+    row = db.execute(text("""
+        SELECT MAX(push_defer_until) AS latest_defer
+        FROM courier_offers
+        WHERE driver_user_id = :uid AND status = 'active'
+    """), {"uid": driver_user_id}).mappings().first()
+    if not row: return True
+    ts = row.get("latest_defer")
+    if ts is None: return True
+    return datetime.now(timezone.utc) >= ts
 
 
 def run_clearing_tick(
@@ -61,15 +81,21 @@ def run_clearing_tick(
     # Map to Ask DTOs
     asks: List[Ask] = []
     for r in req_rows:
-        asks.append(Ask(
-            id=str(r.id),
-            pickup=Point(float(r.from_lat), float(r.from_lon)),
-            dropoff=Point(float(r.to_lat), float(r.to_lon)),
-            size=float((r.passengers or 1)),
-            max_price=float(r.max_price or 0),
-            window_start=None if r.window_start is None else r.window_start.timestamp()/60.0,
-            window_end=None if r.window_end is None else r.window_end.timestamp()/60.0,
-        ))
+        asks.append(
+            Ask(
+                id=str(r.id),
+                pickup=Point(float(r.from_lat), float(r.from_lon)),
+                dropoff=Point(float(r.to_lat), float(r.to_lon)),
+                size=float((r.passengers or 1)),
+                max_price=float(r.max_price or 0),
+                window_start=None
+                if r.window_start is None
+                else r.window_start.timestamp() / 60.0,
+                window_end=None
+                if r.window_end is None
+                else r.window_end.timestamp() / 60.0,
+            )
+        )
 
     # 2) Load active courier offers
     offer_rows: List[CourierOffers] = (
@@ -84,9 +110,7 @@ def run_clearing_tick(
     # 3) Load driver users for those offers
     driver_ids = sorted({o.driver_user_id for o in offer_rows})
     drivers_rows: List[Users] = (
-        db.query(Users)
-        .filter(and_(Users.id.in_(driver_ids), Users.role == "driver"))
-        .all()
+        db.query(Users).filter(and_(Users.id.in_(driver_ids), Users.role == "driver")).all()
     )
     if not drivers_rows:
         return {"cleared": False, "reason": "no valid drivers for offers"}
@@ -98,13 +122,15 @@ def run_clearing_tick(
     drivers: List[DriverState] = []
     driver_index_by_id: Dict[str, int] = {}
     for j, u in enumerate(drivers_rows):
-        drivers.append(DriverState(
-            driver_id=str(u.id),
-            pos=anchor_point,
-            time_min=0.0,
-            capacity_left=1.0,
-            rating=float(u.rating or 0.0),
-        ))
+        drivers.append(
+            DriverState(
+                driver_id=str(u.id),
+                pos=anchor_point,
+                time_min=0.0,
+                capacity_left=1.0,
+                rating=float(u.rating or 0.0),
+            )
+        )
         driver_index_by_id[str(u.id)] = j
 
     # Group offers by driver
@@ -113,7 +139,7 @@ def run_clearing_tick(
         offers_by_driver.setdefault(str(off.driver_user_id), []).append(off)
 
     def type_matches(req_type: str, offer_types: list[str]) -> bool:
-        return (req_type in (offer_types or []))
+        return req_type in (offer_types or [])
 
     def windows_overlap(req_start, req_end, off_start, off_end) -> bool:
         if req_start is None or req_end is None:
@@ -132,8 +158,8 @@ def run_clearing_tick(
         for drv_user_id, drv_idx in driver_index_by_id.items():
             matching_prices: list[float] = []
             for off in offers_by_driver.get(drv_user_id, []):
-                off_ws = off.window_start.timestamp()/60.0
-                off_we = off.window_end.timestamp()/60.0
+                off_ws = off.window_start.timestamp() / 60.0
+                off_we = off.window_end.timestamp() / 60.0
 
                 if not type_matches(req_type, off.types):
                     continue
@@ -188,7 +214,7 @@ def run_clearing_tick(
         weights=weights,
         rating_max=5.0,
         allowed_drivers_per_ask=allowed_pruned,
-        bid_amounts=price_per_pair_pruned,     # כאן "bid" = offer.min_price
+        bid_amounts=price_per_pair_pruned,  # כאן "bid" = offer.min_price
         price_lb_per_ask=price_lb_pruned,
     )
     if not plan:
@@ -201,70 +227,85 @@ def run_clearing_tick(
         req_row = pruned_to_row[new_i]
         drv_user = drivers_rows[drv_j]
 
-        db.add(Assignments(
-            request_id=req_row.id,
-            driver_user_id=drv_user.id,
-            status="created",
-            assigned_at=datetime.now(timezone.utc),
-        ))
+        db.add(
+            Assignments(
+                request_id=req_row.id,
+                driver_user_id=drv_user.id,
+                status="created",
+                assigned_at=datetime.now(timezone.utc),
+            )
+        )
 
+        # Update request status
         req_row.status = "assigned"
 
         # Optionally mark cheapest matching offer as assigned
         if mark_offer_assigned:
             m_offers = [
-                off for off in offers_by_driver[str(drv_user.id)]
+                off
+                for off in offers_by_driver[str(drv_user.id)]
                 if str(req_row.type) in (off.types or [])
-                and (req_row.window_start is None or req_row.window_end is None
-                     or (off.window_start <= req_row.window_end and off.window_end >= req_row.window_start))
+                and (
+                    req_row.window_start is None
+                    or req_row.window_end is None
+                    or (off.window_start <= req_row.window_end and off.window_end >= req_row.window_start)
+                )
                 and (req_row.max_price is None or off.min_price <= req_row.max_price)
             ]
             if m_offers:
                 m_offers.sort(key=lambda o: float(o.min_price))
                 m_offers[0].status = "assigned"
 
-        results.append({
-            "request_id": str(req_row.id),
-            "driver_user_id": str(drv_user.id),
-        })
+        results.append(
+            {
+                "request_id": str(req_row.id),
+                "driver_user_id": str(drv_user.id),
+            }
+        )
 
     db.commit()
 
-    # Push notifications (owner + driver of each match)
+    # Push notifications (owner + driver of each match) — only if defer window passed
     for m in results:
-        req_id = m["request_id"]; drv_id = m["driver_user_id"]
+        req_id = m["request_id"]
+        drv_id = m["driver_user_id"]
+
+        # Should we send push now?
+        send_now_owner = _should_send_push_request(db, req_id)
+        send_now_driver = _should_send_push_driver(db, drv_id)
+
         owner_row = db.execute(
             text("SELECT owner_user_id FROM requests WHERE id = :rid"),
-            {"rid": req_id}
+            {"rid": req_id},
         ).fetchone()
         owner_id = str(owner_row[0]) if owner_row else None
 
         rows = db.execute(
             text("SELECT id::text, expo_push_token FROM users WHERE id = ANY(:ids)"),
-            {"ids": [owner_id, drv_id]}
+            {"ids": [owner_id, drv_id]},
         ).mappings().all()
         tokens = {r["id"]: r["expo_push_token"] for r in rows if r["expo_push_token"]}
 
-        print("[AUCTION] tokens loaded:", tokens)
+        print(f"[AUCTION] tokens loaded: {tokens}, send_now_owner={send_now_owner}, send_now_driver={send_now_driver}")
 
-        if owner_id and owner_id in tokens:
-            fire_and_forget(send_expo_async(
-                tokens[owner_id],
-                "נמצאה לך התאמה 🚗",
-                "יש נהג שמתאים לבקשה שלך. פתחי את האפליקציה לאישור.",
-                {"screen": "Assignment", "request_id": req_id},
-                sound="default",
-                channel_id="default",
-            ))
-        if drv_id in tokens:
-            fire_and_forget(send_expo_async(
-                tokens[drv_id],
-                "התאמה חדשה עבורך ✅",
-                "יש נסיעה שמתאימה להצעה שלך. פתח כדי לקבל/לדחות.",
-                {"screen": "Assignment", "request_id": req_id, "driver_user_id": drv_id},
-                sound="default",
-                channel_id="default",
-            ))
+        if send_now_owner and owner_id and owner_id in tokens:fire_and_forget(send_expo_async(
+        tokens[owner_id],
+        "נמצאה לך התאמה 🚗",
+        "יש נהג שמתאים לבקשה שלך. פתחי את האפליקציה לאישור.",
+        {"screen": "Assignment", "request_id": req_id},
+        sound="default", channel_id="default",
+    ))
+
+    if send_now_driver and drv_id in tokens:fire_and_forget(send_expo_async(
+        tokens[drv_id],
+        "התאמה חדשה עבורך ✅",
+        "יש נסיעה שמתאימה להצעה שלך. פתח כדי לקבל/לדחות.",
+        {"screen": "Assignment", "request_id": req_id, "driver_user_id": drv_id},
+        sound="default", channel_id="default",
+    ))
+    else:
+        # Defer window still active → don't push. (The waiting screen will show the match live.)
+        pass
 
     return {
         "cleared": True,
@@ -272,6 +313,7 @@ def run_clearing_tick(
         "objective": {"total_weighted_penalty": total_penalty},
         "debug": dbg,
     }
+
 
 @router.post("/clear")
 def clear_market_endpoint(

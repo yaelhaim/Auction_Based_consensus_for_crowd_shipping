@@ -1,4 +1,6 @@
 // app/lib/push.ts
+// Expo push notifications: permissions, token fetch, and backend sync.
+
 import { Platform, Linking } from "react-native";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
@@ -18,8 +20,7 @@ Notifications.setNotificationHandler({
 
 async function ensureAndroidChannel() {
   if (Platform.OS !== "android") return;
-  const channelId = "default";
-  await Notifications.setNotificationChannelAsync(channelId, {
+  await Notifications.setNotificationChannelAsync("default", {
     name: "Default",
     importance: Notifications.AndroidImportance.MAX,
     sound: "default",
@@ -32,6 +33,7 @@ export async function ensurePushSetup(): Promise<void> {
   if (!Device.isDevice) return;
   const before = await Notifications.getPermissionsAsync();
   let status = before.status;
+
   if (status !== "granted" && before.canAskAgain) {
     const req = await Notifications.requestPermissionsAsync({
       ios: { allowAlert: true, allowBadge: true, allowSound: true },
@@ -52,14 +54,6 @@ function resolveProjectId(): string {
   return fromExtra ?? fromConstants ?? FALLBACK_PROJECT_ID;
 }
 
-function errToStr(e: any) {
-  try {
-    return JSON.stringify(e, Object.getOwnPropertyNames(e));
-  } catch {
-    return String(e);
-  }
-}
-
 export async function getExpoTokenOrNull(): Promise<string | null> {
   try {
     if (!Device.isDevice) return null;
@@ -78,73 +72,29 @@ export async function registerAndSyncPushToken(
   jwt?: string
 ): Promise<string | null> {
   try {
+    await ensurePushSetup();
     const expoToken = await getExpoTokenOrNull();
     if (!expoToken) return null;
-    const resp = await fetch(`${apiBaseUrl}/devices/register`, {
+
+    await fetch(`${apiBaseUrl}/devices/register`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       },
-      body: JSON.stringify({
-        provider: "expo",
-        token: expoToken,
-        platform: Platform.OS,
-        channel_id: "default",
-      }),
-    });
-    if (!resp.ok) return null;
+      body: JSON.stringify({ expo_push_token: expoToken }),
+    }).catch(() => {});
     return expoToken;
   } catch {
     return null;
   }
 }
 
-/** 🔎 דוח דיאגנוסטיקה קצר לשימוש ב-Alert */
 export async function getPushDebugReport(): Promise<string> {
-  const lines: string[] = [];
   try {
-    lines.push(`platform=${Platform.OS} isDevice=${String(Device.isDevice)}`);
-
-    // Permissions
     const perms = await Notifications.getPermissionsAsync();
-    lines.push(
-      `perm.status=${perms.status} canAskAgain=${String(perms.canAskAgain)}`
-    );
-
-    // Project ID
-    const pid = resolveProjectId();
-    lines.push(`projectId=${pid}`);
-
-    // Android channel
-    if (Platform.OS === "android") {
-      const ch = await Notifications.getNotificationChannelAsync("default");
-      lines.push(`android.channel.default=${ch ? "exists" : "missing"}`);
-    }
-
-    // Try Expo token
-    let expoToken = "";
-    try {
-      const resp = await Notifications.getExpoPushTokenAsync({
-        projectId: pid,
-      });
-      expoToken = resp?.data ?? "";
-      lines.push(`expoToken=${expoToken ? expoToken : "(none)"}`);
-    } catch (e) {
-      lines.push(`expoToken.error=${errToStr(e)}`);
-    }
-
-    // Device token (FCM/APNS) – דיאגנוסטיקה בלבד
-    try {
-      const dev = await Notifications.getDevicePushTokenAsync();
-      lines.push(
-        `deviceToken.type=${dev?.type ?? "(?)"} present=${dev?.data ? "yes" : "no"}`
-      );
-    } catch (e) {
-      lines.push(`deviceToken.error=${errToStr(e)}`);
-    }
-  } catch (e) {
-    lines.push(`fatal=${errToStr(e)}`);
+    return `perm=${perms.status}`;
+  } catch {
+    return "perm=unknown";
   }
-  return lines.join("\n");
 }
