@@ -215,11 +215,11 @@ export async function upsertProfile(
 
 // --------------------------- Sender (packages) ------------------------------
 
-/** A request created by a sender. */
+/** A request created by a sender or rider. */
 export type RequestRow = {
   id: string;
   owner_user_id: string;
-  type: "package" | "ride"; // keep 'ride' for compatibility where screens check it
+  type: "package" | "ride" | "passenger"; // include passenger to reflect backend
   from_address: string;
   from_lat?: number | null;
   from_lon?: number | null;
@@ -367,7 +367,7 @@ export async function createCourierOffer(
   }
 ) {
   return jsonFetch<{ id: string; status: string; created_at: string }>(
-    `${BASE_URL}/courier/offers`,
+    `${BASE_URL}/offers`,
     {
       method: "POST",
       headers: {
@@ -392,7 +392,6 @@ export type CourierOfferRow = {
   min_price: string; // מגיע כטקסט מה-API (NUMERIC), תרצי -> parseFloat
   types: ("package" | "passenger")[];
   notes?: string | null;
-  // ⬅ הוספתי 'assigned' כדי לשקף את DB בפועל
   status: "active" | "assigned" | "paused" | "completed" | "cancelled";
   created_at: string; // ISO
   updated_at: string; // ISO
@@ -407,13 +406,10 @@ export async function listMyCourierOffers(
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
-  return jsonFetch<CourierOfferRow[]>(
-    `${BASE_URL}/courier/offers?${q.toString()}`,
-    {
-      headers: { ...authHeaders(token) },
-      timeoutMs: 12000,
-    }
-  );
+  return jsonFetch<CourierOfferRow[]>(`${BASE_URL}/offers?${q.toString()}`, {
+    headers: { ...authHeaders(token) },
+    timeoutMs: 12000,
+  });
 }
 
 // ------------------------------- Rider (rides) ------------------------------
@@ -477,16 +473,23 @@ export type CreateRiderPayload = {
   passengers: number;
   notes?: string | null;
   max_price?: number | null;
+  from_lat?: number | null;
+  from_lon?: number | null;
+  to_lat?: number | null;
+  to_lon?: number | null;
 };
 
 export async function createRiderRequest(
   token: string,
   payload: CreateRiderPayload
 ) {
-  return jsonFetch<RiderRequestRow>(`${BASE_URL}/rider/requests`, {
+  // Send via /requests with type='ride'
+  const body = { type: "ride", ...payload };
+  return jsonFetch<CreateRequestResponse>(`${BASE_URL}/requests`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
+    timeoutMs: 12000,
   });
 }
 
@@ -498,7 +501,6 @@ export async function riderCancelRequest(token: string, requestId: string) {
 }
 
 // ---------------------------- Create Request API -----------------------------
-// (Generic sender create remains because you said it works on your server)
 
 export type CreateRequestInput = {
   type: "package" | "ride" | "passenger"; // keep 'passenger' for backward compat
@@ -523,7 +525,6 @@ export type CreateRequestResponse = {
   created_at: string; // ISO
 };
 
-/** Sender generic create (kept as-is since it works in your backend) */
 export async function createSenderRequest(
   token: string,
   body: CreateRequestInput
@@ -540,25 +541,20 @@ export async function createSenderRequest(
 }
 
 // -------------------------------- Auctions ----------------------------------
-// Double auction clearing + optional on-chain close.
-// Uses same jsonFetch + logging/timeout flow as rest of the file.
 
-export type AuctionClearRequest = {
-  request_ids?: string[]; // UUID strings
-  now_ts?: number;
-};
-
-export type AuctionClearResponse = {
-  ok: boolean;
-  assigned: Record<string, string>; // { request_id: driver_user_id }
-  count: number;
-  message?: string; // "NO_MATCH" etc.
+export type AuctionClearResult = {
+  cleared: boolean;
+  matches?: { request_id: string; driver_user_id: string }[];
+  reason?: string;
+  debug?: any;
+  debug_counts?: any;
+  objective?: { total_weighted_penalty: number };
 };
 
 export async function clearAuctions(
-  payload: AuctionClearRequest
-): Promise<AuctionClearResponse> {
-  return jsonFetch<AuctionClearResponse>(`${BASE_URL}/auctions/clear`, {
+  payload: { request_ids?: string[]; now_ts?: number } = {}
+): Promise<AuctionClearResult> {
+  return jsonFetch<AuctionClearResult>(`${BASE_URL}/auction/clear`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -583,9 +579,7 @@ export async function closeAuctionOnchain(payload: {
 
 // --------------------------------- Utilities --------------------------------
 
-/** Optional tiny ping you can call from a health screen. */
 export async function pingApi(): Promise<{ ok: true }> {
-  // Try /healthz first, fallback to /health/db if exists
   try {
     await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
   } catch {
@@ -602,12 +596,13 @@ export async function deferPushForRequest(
   requestId: string,
   seconds = 60
 ) {
-  const url = `${BASE_URL}/requests/${encodeURIComponent(requestId)}/defer_push?seconds=${seconds}`;
+  const url = `${BASE_URL}/requests/${encodeURIComponent(
+    requestId
+  )}/defer_push?seconds=${seconds}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  // השרת מחזיר { ok: true, push_defer_until: "<iso>" }
   if (!res.ok) return null;
   try {
     return (await res.json()) as { ok: boolean; push_defer_until?: string };
@@ -636,7 +631,9 @@ export async function deferPushForOffer(
   offerId: string,
   seconds = 60
 ) {
-  const url = `${BASE_URL}/offers/${encodeURIComponent(offerId)}/defer_push?seconds=${seconds}`;
+  const url = `${BASE_URL}/offers/${encodeURIComponent(
+    offerId
+  )}/defer_push?seconds=${seconds}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },

@@ -1,13 +1,13 @@
 # app/auction/routes_auction.py
-# Clearing via IDA* using courier_offers (supply). Sends push notifications on matches,
-# BUT only if now >= requests.push_defer_until (defer window set by the client).
+# Clearing via IDA* using courier_offers (supply).
+# Sends push notifications on matches, BUT only if now >= requests.push_defer_until (client-side defer).
 
 from __future__ import annotations
 from fastapi import APIRouter, Depends
 from typing import List, Dict, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, text
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # get_db – תואם מבנה פרויקט שונה
 try:
@@ -31,25 +31,81 @@ except Exception:
 
 router = APIRouter(prefix="/auction", tags=["auction"])
 
+# ------------------------- Push defer helpers -------------------------
 
 def _should_send_push_request(db: Session, request_id: str) -> bool:
-    row = db.execute(text("SELECT push_defer_until FROM requests WHERE id = :rid"), {"rid": request_id}).mappings().first()
-    if not row: return True
+    row = db.execute(
+        text("SELECT push_defer_until FROM requests WHERE id = :rid"),
+        {"rid": request_id},
+    ).mappings().first()
+    if not row:
+        return True
     ts = row.get("push_defer_until")
-    if ts is None: return True
+    if ts is None:
+        return True
     return datetime.now(timezone.utc) >= ts
 
 def _should_send_push_driver(db: Session, driver_user_id: str) -> bool:
-    row = db.execute(text("""
-        SELECT MAX(push_defer_until) AS latest_defer
-        FROM courier_offers
-        WHERE driver_user_id = :uid AND status = 'active'
-    """), {"uid": driver_user_id}).mappings().first()
-    if not row: return True
+    row = db.execute(
+        text("""
+            SELECT MAX(push_defer_until) AS latest_defer
+            FROM courier_offers
+            WHERE driver_user_id = :uid AND status = 'active'
+        """),
+        {"uid": driver_user_id},
+    ).mappings().first()
+    if not row:
+        return True
     ts = row.get("latest_defer")
-    if ts is None: return True
+    if ts is None:
+        return True
     return datetime.now(timezone.utc) >= ts
 
+# ------------------------- Type normalization -------------------------
+
+def _norm_req_type(t: str) -> str:
+    """
+    Normalize request.type to the two supply families the drivers publish:
+    - 'ride' and 'passenger' → 'passenger'
+    - 'package' → 'package'
+    """
+    t = (t or "").strip().lower()
+    if t in ("ride", "passenger"):
+        return "passenger"
+    return "package"
+
+def _type_matches(req_t: str, offer_types: list[str] | None) -> bool:
+    """
+    Driver publishes ARRAY(TEXT) like ['package'] or ['package','passenger'].
+    We compare in lowercase and allow ride≈passenger.
+    """
+    if not offer_types:
+        return False
+    norm = [x.strip().lower() for x in offer_types]
+    if req_t == "passenger":
+        return ("passenger" in norm) or ("ride" in norm)
+    if req_t == "package":
+        return "package" in norm
+    return False
+
+# ------------------------- Time overlap with tolerance -------------------------
+
+_TOL_MIN = 20  # דקות של טולרנס לחפיפה
+
+def _minutes(ts: datetime | None) -> float | None:
+    return None if ts is None else ts.timestamp() / 60.0
+
+def _windows_overlap(req_start_min, req_end_min, off_start_min, off_end_min) -> bool:
+    """
+    אם לבקשה אין חלון מלא – נתייחס כגמיש (True).
+    מאפשרים טולרנס (±_TOL_MIN דק') כדי לא ליפול על שניות.
+    """
+    if req_start_min is None or req_end_min is None:
+        return True
+    tol = _TOL_MIN
+    return (off_start_min <= (req_end_min + tol)) and (off_end_min + tol >= req_start_min)
+
+# ------------------------- Main clearing -------------------------
 
 def run_clearing_tick(
     db: Session,
@@ -88,12 +144,8 @@ def run_clearing_tick(
                 dropoff=Point(float(r.to_lat), float(r.to_lon)),
                 size=float((r.passengers or 1)),
                 max_price=float(r.max_price or 0),
-                window_start=None
-                if r.window_start is None
-                else r.window_start.timestamp() / 60.0,
-                window_end=None
-                if r.window_end is None
-                else r.window_end.timestamp() / 60.0,
+                window_start=_minutes(r.window_start),
+                window_end=_minutes(r.window_end),
             )
         )
 
@@ -110,7 +162,9 @@ def run_clearing_tick(
     # 3) Load driver users for those offers
     driver_ids = sorted({o.driver_user_id for o in offer_rows})
     drivers_rows: List[Users] = (
-        db.query(Users).filter(and_(Users.id.in_(driver_ids), Users.role == "driver")).all()
+        db.query(Users)
+        .filter(and_(Users.id.in_(driver_ids), Users.role == "driver"))
+        .all()
     )
     if not drivers_rows:
         return {"cleared": False, "reason": "no valid drivers for offers"}
@@ -138,52 +192,86 @@ def run_clearing_tick(
     for off in offer_rows:
         offers_by_driver.setdefault(str(off.driver_user_id), []).append(off)
 
-    def type_matches(req_type: str, offer_types: list[str]) -> bool:
-        return req_type in (offer_types or [])
-
-    def windows_overlap(req_start, req_end, off_start, off_end) -> bool:
-        if req_start is None or req_end is None:
-            return True
-        return (off_start <= req_end) and (off_end >= req_start)
+    # Debug counters (יעזרו להבין למה אין התאמות)
+    dbg_counts = {
+        "total_pairs_checked": 0,
+        "filtered_by_type": 0,
+        "filtered_by_time": 0,
+        "filtered_by_price": 0,
+    }
 
     allowed_drivers_per_ask: List[List[int]] = [[] for _ in asks]
     price_per_pair: Dict[Tuple[int, int], float] = {}
     price_lb_per_ask: List[float] = [float("inf")] * len(asks)
 
     for req_idx, r in enumerate(req_rows):
-        req_type = str(r.type)
+        req_type = _norm_req_type(str(r.type))
         req_ws = asks[req_idx].window_start
         req_we = asks[req_idx].window_end
 
         for drv_user_id, drv_idx in driver_index_by_id.items():
-            matching_prices: list[float] = []
+            best_for_driver: float | None = None
+
             for off in offers_by_driver.get(drv_user_id, []):
-                off_ws = off.window_start.timestamp() / 60.0
-                off_we = off.window_end.timestamp() / 60.0
+                dbg_counts["total_pairs_checked"] += 1
 
-                if not type_matches(req_type, off.types):
+                off_ws = _minutes(off.window_start)
+                off_we = _minutes(off.window_end)
+
+                # type
+                if not _type_matches(req_type, off.types):
+                    dbg_counts["filtered_by_type"] += 1
                     continue
-                if not windows_overlap(req_ws, req_we, off_ws, off_we):
+
+                # time
+                if not _windows_overlap(req_ws, req_we, off_ws, off_we):
+                    dbg_counts["filtered_by_time"] += 1
                     continue
-                if r.max_price is not None and off.min_price is not None:
-                    if float(off.min_price) > float(r.max_price):
-                        continue
 
-                matching_prices.append(float(off.min_price))
+                # price: אם לבקשה אין תקרה (None או 0) – לא מסננים
+                req_cap = None
+                try:
+                    req_cap = float(r.max_price) if r.max_price is not None else None
+                except Exception:
+                    req_cap = None
+                if req_cap is not None and req_cap <= 0:
+                    req_cap = None  # treat 0 as "no cap"
 
-            if matching_prices:
-                best = min(matching_prices)
+                off_min = None
+                try:
+                    off_min = float(off.min_price) if off.min_price is not None else None
+                except Exception:
+                    off_min = None
+
+                if req_cap is not None and off_min is not None and off_min > req_cap:
+                    dbg_counts["filtered_by_price"] += 1
+                    continue
+
+                # reached here = feasible
+                if off_min is not None:
+                    if best_for_driver is None or off_min < best_for_driver:
+                        best_for_driver = off_min
+
+            if best_for_driver is not None:
                 allowed_drivers_per_ask[req_idx].append(drv_idx)
-                price_per_pair[(req_idx, drv_idx)] = best
-                if best < price_lb_per_ask[req_idx]:
-                    price_lb_per_ask[req_idx] = best
+                price_per_pair[(req_idx, drv_idx)] = best_for_driver
+                if best_for_driver < price_lb_per_ask[req_idx]:
+                    price_lb_per_ask[req_idx] = best_for_driver
 
     # prune asks with no candidates
     keep_mask = [len(allowed_drivers_per_ask[i]) > 0 for i in range(len(asks))]
     if not any(keep_mask):
-        return {"cleared": False, "reason": "no feasible ask-offer pairs (type/time/budget filters)"}
+        return {
+            "cleared": False,
+            "reason": "no feasible ask-offer pairs (type/time/budget filters)",
+            "debug_counts": dbg_counts,
+            "sample": {
+                "open_requests": len(req_rows),
+                "active_offers": len(offer_rows),
+            },
+        }
 
-    old_to_new = {}
+    old_to_new: Dict[int, int] = {}
     asks_pruned: List[Ask] = []
     allowed_pruned: List[List[int]] = []
     price_lb_pruned: List[float] = []
@@ -199,6 +287,30 @@ def run_clearing_tick(
     for (old_i, j), p in price_per_pair.items():
         if old_i in old_to_new:
             price_per_pair_pruned[(old_to_new[old_i], j)] = p
+
+    # ---- NEW: גבול K = מספר הנהגים (כשיש יותר בקשות כשירות מנהגים) ----
+    max_assign = len(drivers_rows)
+    if len(asks_pruned) > max_assign and max_assign > 0:
+        # בוחרים את K הבקשות "הטובות": קודם מחיר תחתון, ואז לפי window_start
+        sel = sorted(
+            range(len(asks_pruned)),
+            key=lambda i: (price_lb_pruned[i], asks_pruned[i].window_start or 0)
+        )[:max_assign]
+
+        def _take(lst):
+            return [lst[i] for i in sel]
+
+        asks_pruned     = _take(asks_pruned)
+        allowed_pruned  = _take(allowed_pruned)
+        price_lb_pruned = _take(price_lb_pruned)
+
+        # מיפוי מחדש של price_per_pair_pruned לאינדקסים החדשים
+        idx_map = {old_i: new_i for new_i, old_i in enumerate(sel)}
+        price_per_pair_pruned = {
+            (idx_map[i], j): p
+            for (i, j), p in price_per_pair_pruned.items()
+            if i in idx_map
+        }
 
     weights = Weights(
         w_dist=w_dist,
@@ -218,7 +330,7 @@ def run_clearing_tick(
         price_lb_per_ask=price_lb_pruned,
     )
     if not plan:
-        return {"cleared": False, "reason": "no optimal plan found", "debug": dbg}
+        return {"cleared": False, "reason": "no optimal plan found", "debug": dbg, "debug_counts": dbg_counts}
 
     # Persist
     pruned_to_row = {new_i: req_rows[old_i] for old_i, new_i in old_to_new.items()}
@@ -239,21 +351,24 @@ def run_clearing_tick(
         # Update request status
         req_row.status = "assigned"
 
-        # Optionally mark cheapest matching offer as assigned
+        # Optionally mark cheapest matching offer as assigned (respect remap and overlap)
         if mark_offer_assigned:
             m_offers = [
                 off
                 for off in offers_by_driver[str(drv_user.id)]
-                if str(req_row.type) in (off.types or [])
+                if _type_matches(_norm_req_type(str(req_row.type)), off.types)
                 and (
                     req_row.window_start is None
                     or req_row.window_end is None
-                    or (off.window_start <= req_row.window_end and off.window_end >= req_row.window_start)
+                    or (
+                        off.window_start <= req_row.window_end
+                        and off.window_end >= req_row.window_start
+                    )
                 )
-                and (req_row.max_price is None or off.min_price <= req_row.max_price)
+                and (req_row.max_price is None or off.min_price is None or float(off.min_price) <= float(req_row.max_price))
             ]
             if m_offers:
-                m_offers.sort(key=lambda o: float(o.min_price))
+                m_offers.sort(key=lambda o: float(o.min_price or 0))
                 m_offers[0].status = "assigned"
 
         results.append(
@@ -270,7 +385,6 @@ def run_clearing_tick(
         req_id = m["request_id"]
         drv_id = m["driver_user_id"]
 
-        # Should we send push now?
         send_now_owner = _should_send_push_request(db, req_id)
         send_now_driver = _should_send_push_driver(db, drv_id)
 
@@ -280,40 +394,52 @@ def run_clearing_tick(
         ).fetchone()
         owner_id = str(owner_row[0]) if owner_row else None
 
-        rows = db.execute(
-            text("SELECT id::text, expo_push_token FROM users WHERE id = ANY(:ids)"),
-            {"ids": [owner_id, drv_id]},
-        ).mappings().all()
-        tokens = {r["id"]: r["expo_push_token"] for r in rows if r["expo_push_token"]}
+        # ----- FIX: cast id to text so it matches the text[] parameter passed to ANY() -----
+        ids_list = list({x for x in [owner_id, drv_id] if x})  # unique & non-empty
+        tokens = {}
+        if ids_list:
+            rows = db.execute(
+                text("SELECT id::text, expo_push_token FROM users WHERE id::text = ANY(:ids)"),
+                {"ids": ids_list},
+            ).mappings().all()
+            tokens = {r["id"]: r["expo_push_token"] for r in rows if r["expo_push_token"]}
 
-        print(f"[AUCTION] tokens loaded: {tokens}, send_now_owner={send_now_owner}, send_now_driver={send_now_driver}")
+        print(f"[AUCTION] tokens={tokens}  send_owner={send_now_owner}  send_driver={send_now_driver}")
 
-        if send_now_owner and owner_id and owner_id in tokens:fire_and_forget(send_expo_async(
-        tokens[owner_id],
-        "נמצאה לך התאמה 🚗",
-        "יש נהג שמתאים לבקשה שלך. פתחי את האפליקציה לאישור.",
-        {"screen": "Assignment", "request_id": req_id},
-        sound="default", channel_id="default",
-    ))
+        if send_now_owner and owner_id and owner_id in tokens:
+            fire_and_forget(
+                send_expo_async(
+                    tokens[owner_id],
+                    "נמצאה לך התאמה 🚗",
+                    "יש נהג שמתאים לבקשה שלך. פתחי את האפליקציה לאישור.",
+                    {"screen": "Assignment", "request_id": req_id},
+                    sound="default",
+                    channel_id="default",
+                )
+            )
 
-    if send_now_driver and drv_id in tokens:fire_and_forget(send_expo_async(
-        tokens[drv_id],
-        "התאמה חדשה עבורך ✅",
-        "יש נסיעה שמתאימה להצעה שלך. פתח כדי לקבל/לדחות.",
-        {"screen": "Assignment", "request_id": req_id, "driver_user_id": drv_id},
-        sound="default", channel_id="default",
-    ))
-    else:
-        # Defer window still active → don't push. (The waiting screen will show the match live.)
-        pass
+        if send_now_driver and drv_id in tokens:
+            fire_and_forget(
+                send_expo_async(
+                    tokens[drv_id],
+                    "התאמה חדשה עבורך ✅",
+                    "יש נסיעה שמתאימה להצעה שלך. פתח כדי לקבל/לדחות.",
+                    {"screen": "Assignment", "request_id": req_id, "driver_user_id": drv_id},
+                    sound="default",
+                    channel_id="default",
+                )
+            )
+        else:
+            # Defer window still active → don't push. (The waiting screen will show the match live.)
+            pass
 
     return {
         "cleared": True,
         "matches": results,
         "objective": {"total_weighted_penalty": total_penalty},
         "debug": dbg,
+        "debug_counts": dbg_counts,
     }
-
 
 @router.post("/clear")
 def clear_market_endpoint(

@@ -1,15 +1,18 @@
 // app/matching-await.tsx
 // Waiting screen (sender/rider) with city-map background + white card + hourglass.
-// Logic unchanged: defer push, poll for match, timeout → הודעה.
+// דוחה פושים, בועט בניקוי (IDA*), עושה polling להתאמה ומציג תוצאה.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { deferPushForRequest, checkMatchStatus } from "../lib/api";
+import {
+  deferPushForRequest,
+  checkMatchStatus,
+  clearAuctions,
+} from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
 
-// ⏱ timings (כמו שסיכמנו)
 const POLL_MS = 1500;
 const DEFER_SECONDS = 120;
 const DEFAULT_WAIT_MS = 60000;
@@ -44,14 +47,17 @@ export default function MatchingAwait() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!requestId || !token) return;
 
     async function start() {
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
+
+      // דחיית פושים עבור הבקשה הזו
       try {
         const resp = await deferPushForRequest(
-          String(token || ""),
+          String(token),
           String(requestId),
           DEFER_SECONDS
         );
@@ -60,21 +66,42 @@ export default function MatchingAwait() {
           const ts = Date.parse(untilIso);
           if (!Number.isNaN(ts)) deadlineRef.current = ts + GRACE_MS;
         }
-      } catch {}
+      } catch (e) {
+        console.log(
+          "[await] deferPushForRequest error:",
+          (e as any)?.message || e
+        );
+      }
+
+      // בעיטה חד־פעמית לניקוי השוק (IDA*) – לא חוסם UI
+      clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
+        .then((r: any) =>
+          console.log(
+            "[await] clearAuctions →",
+            r?.cleared,
+            r?.reason || "",
+            r?.debug_counts || {}
+          )
+        )
+        .catch((e: any) =>
+          console.log("[await] clearAuctions error:", e?.message || e)
+        );
 
       async function poll() {
         try {
-          const res = await checkMatchStatus(
-            String(token || ""),
-            String(requestId)
-          );
+          const res = await checkMatchStatus(String(token), String(requestId));
           if (cancelled) return;
           if (res?.status === "matched" && res.assignment_id) {
             setAssignmentId(String(res.assignment_id));
             setStatus("matched");
             return;
           }
-        } catch {}
+        } catch (e) {
+          console.log(
+            "[await] checkMatchStatus error:",
+            (e as any)?.message || e
+          );
+        }
 
         const stopAt =
           deadlineRef.current ?? Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
@@ -106,13 +133,12 @@ export default function MatchingAwait() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
   function openAssignment() {
-    // אם יש מסך התאמה – לנווט אליו; כרגע לדף הבית
+    // אם יש מסך התאמה ייעודי – לנווט אליו; כרגע חוזרים לבית
     goHome();
   }
 
   return (
     <WaitBackground
-      // אם התמונה לא בשם הזה, עדכני: imageUri={require("./assets/your-file.jpg")}
       imageUri={cityMap}
       opacity={0.7}
       blurRadius={2}

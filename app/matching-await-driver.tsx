@@ -9,7 +9,8 @@ import {
   deferPushForOffer,
   checkOfferMatchStatus,
   listMyCourierOffers,
-  type CourierOfferRow,
+  clearAuctions,
+  type CourierOfferRow, // ← חשוב: טיפוס לתוצאת הרשימה
 } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
@@ -39,14 +40,17 @@ export default function MatchingAwaitDriver() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!offerId || !token) return;
 
     async function start() {
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
+
+      // דחיית פושים למסך זה
       try {
         const resp = await deferPushForOffer(
-          String(token || ""),
+          String(token),
           String(offerId),
           DEFER_SECONDS
         );
@@ -55,13 +59,35 @@ export default function MatchingAwaitDriver() {
           const ts = Date.parse(untilIso);
           if (!Number.isNaN(ts)) deadlineRef.current = ts + GRACE_MS;
         }
-      } catch {}
+      } catch (e) {
+        console.log(
+          "[await-driver] deferPushForOffer error:",
+          (e as any)?.message || e
+        );
+      }
+
+      // בעיטה חד־פעמית לניקוי (IDA*) – רץ ברקע, לא חוסם UI
+      clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
+        .then((r) =>
+          console.log(
+            "[await-driver] clearAuctions →",
+            r?.cleared,
+            r?.reason || "",
+            r?.debug_counts || {}
+          )
+        )
+        .catch((e) =>
+          console.log(
+            "[await-driver] clearAuctions error:",
+            (e as any)?.message || e
+          )
+        );
 
       async function poll() {
-        // בדיקה ייעודית
+        // בדיקה ייעודית לסטטוס ההצעה
         try {
           const raw = await checkOfferMatchStatus(
-            String(token || ""),
+            String(token),
             String(offerId)
           );
           if (cancelled) return;
@@ -72,12 +98,17 @@ export default function MatchingAwaitDriver() {
             setStatus("matched");
             return;
           }
-        } catch {}
+        } catch (e) {
+          console.log(
+            "[await-driver] checkOfferMatchStatus error:",
+            (e as any)?.message || e
+          );
+        }
 
         // פולבק: האם ההצעה הזו כבר assigned?
         try {
           const assigned: CourierOfferRow[] = await listMyCourierOffers(
-            String(token || ""),
+            String(token),
             {
               status: "assigned",
               limit: 50,
@@ -92,7 +123,12 @@ export default function MatchingAwaitDriver() {
               return;
             }
           }
-        } catch {}
+        } catch (e) {
+          console.log(
+            "[await-driver] listMyCourierOffers error:",
+            (e as any)?.message || e
+          );
+        }
 
         const stopAt =
           deadlineRef.current ?? Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
@@ -124,9 +160,9 @@ export default function MatchingAwaitDriver() {
   return (
     <WaitBackground
       imageUri={cityMap}
-      opacity={0.7} // נראה ברור יותר
+      opacity={0.7}
       blurRadius={2}
-      darken={0.2} // קונטרסט עדין (אפשר 0.15–0.28 לפי טעם)
+      darken={0.2}
       tintAlpha={0}
     >
       <View style={S.card}>
