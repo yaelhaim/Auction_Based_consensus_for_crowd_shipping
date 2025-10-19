@@ -1,6 +1,6 @@
 // app/matching-await-driver.tsx
 // Driver waiting screen with city-map background + white card + hourglass.
-// משתמש ב-listMyCourierOffers כדי לגלות 'assigned' כהצלבה.
+// Uses listMyCourierOffers + checkOfferMatchStatus to detect 'matched' and navigates to assignment details.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
@@ -10,7 +10,7 @@ import {
   checkOfferMatchStatus,
   listMyCourierOffers,
   clearAuctions,
-  type CourierOfferRow, // ← חשוב: טיפוס לתוצאת הרשימה
+  type CourierOfferRow,
 } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
@@ -33,6 +33,7 @@ export default function MatchingAwaitDriver() {
     "searching"
   );
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [assignmentId, setAssignmentId] = useState<string | null>(null);
 
   const deadlineRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -43,11 +44,12 @@ export default function MatchingAwaitDriver() {
     if (!offerId || !token) return;
 
     async function start() {
+      // Establish a soft deadline for polling
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
 
-      // דחיית פושים למסך זה
+      // Defer push notifications for this offer while the user is on this screen
       try {
         const resp = await deferPushForOffer(
           String(token),
@@ -66,7 +68,7 @@ export default function MatchingAwaitDriver() {
         );
       }
 
-      // בעיטה חד־פעמית לניקוי (IDA*) – רץ ברקע, לא חוסם UI
+      // Fire a non-blocking clearing tick (IDA*)
       clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
         .then((r) =>
           console.log(
@@ -83,18 +85,23 @@ export default function MatchingAwaitDriver() {
           )
         );
 
+      // Polling loop: first try the dedicated endpoint, then fallback to list
       async function poll() {
-        // בדיקה ייעודית לסטטוס ההצעה
+        // 1) Ask backend if this offer is matched (and to which request/assignment)
         try {
           const raw = await checkOfferMatchStatus(
             String(token),
             String(offerId)
           );
           if (cancelled) return;
+
           const st = raw?.status;
           const reqId = String(raw?.request_id ?? raw?.requestId ?? "");
+          const asgId = String(raw?.assignment_id ?? raw?.assignmentId ?? "");
+
           if (st === "matched") {
             if (reqId) setRequestId(reqId);
+            if (asgId) setAssignmentId(asgId);
             setStatus("matched");
             return;
           }
@@ -105,20 +112,18 @@ export default function MatchingAwaitDriver() {
           );
         }
 
-        // פולבק: האם ההצעה הזו כבר assigned?
+        // 2) Fallback: is this offer already 'assigned' in my offers?
         try {
           const assigned: CourierOfferRow[] = await listMyCourierOffers(
             String(token),
-            {
-              status: "assigned",
-              limit: 50,
-            }
+            { status: "assigned", limit: 50 }
           );
           if (!cancelled && Array.isArray(assigned) && assigned.length > 0) {
             const found = assigned.find(
               (o) => String(o.id) === String(offerId)
             );
             if (found) {
+              // requestId may not be present in the offer row; we keep whatever we have.
               setStatus("matched");
               return;
             }
@@ -130,6 +135,7 @@ export default function MatchingAwaitDriver() {
           );
         }
 
+        // 3) Continue polling or timeout
         const stopAt =
           deadlineRef.current ?? Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
         if (Date.now() >= stopAt) {
@@ -152,9 +158,19 @@ export default function MatchingAwaitDriver() {
   function goHome() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
+
+  // Navigate to shared assignment details screen (driver’s perspective)
   function openAssignment() {
-    // אם יש מסך משימה – לנווט אליו; כרגע חוזרים לבית
-    goHome();
+    router.replace({
+      pathname: "/assignment_details",
+      params: {
+        role: "driver",
+        token: String(token ?? ""),
+        offerId: String(offerId),
+        requestId: String(requestId ?? ""),
+        assignmentId: String(assignmentId ?? ""),
+      },
+    });
   }
 
   return (

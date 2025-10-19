@@ -1,6 +1,6 @@
 // app/matching-await.tsx
 // Waiting screen (sender/rider) with city-map background + white card + hourglass.
-// דוחה פושים, בועט בניקוי (IDA*), עושה polling להתאמה ומציג תוצאה.
+// Defers pushes, kicks the clearing (IDA*), polls for a match, and routes to the details screen when matched.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
@@ -50,11 +50,12 @@ export default function MatchingAwait() {
     if (!requestId || !token) return;
 
     async function start() {
+      // Set a soft deadline for polling
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
 
-      // דחיית פושים עבור הבקשה הזו
+      // Defer push notifications for this specific request
       try {
         const resp = await deferPushForRequest(
           String(token),
@@ -73,7 +74,7 @@ export default function MatchingAwait() {
         );
       }
 
-      // בעיטה חד־פעמית לניקוי השוק (IDA*) – לא חוסם UI
+      // Fire a non-blocking clearing tick (IDA*)
       clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
         .then((r: any) =>
           console.log(
@@ -87,6 +88,7 @@ export default function MatchingAwait() {
           console.log("[await] clearAuctions error:", e?.message || e)
         );
 
+      // Start polling for a match
       async function poll() {
         try {
           const res = await checkMatchStatus(String(token), String(requestId));
@@ -132,9 +134,19 @@ export default function MatchingAwait() {
   function goHome() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
+
+  // Navigate to the assignment details screen we created (app/assignment_details.tsx)
   function openAssignment() {
-    // אם יש מסך התאמה ייעודי – לנווט אליו; כרגע חוזרים לבית
-    goHome();
+    // If assignmentId is missing, we still navigate with requestId; the screen can fetch by requestId.
+    router.replace({
+      pathname: "/assignment_details",
+      params: {
+        requestId: String(requestId),
+        token: String(token ?? ""),
+        role: String(role ?? ""),
+        assignmentId: String(assignmentId ?? ""),
+      },
+    });
   }
 
   return (
