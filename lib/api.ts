@@ -483,7 +483,6 @@ export async function createRiderRequest(
   token: string,
   payload: CreateRiderPayload
 ) {
-  // Send via /requests with type='ride'
   const body = { type: "ride", ...payload };
   return jsonFetch<CreateRequestResponse>(`${BASE_URL}/requests`, {
     method: "POST",
@@ -582,10 +581,10 @@ export async function closeAuctionOnchain(payload: {
 export async function pingApi(): Promise<{ ok: true }> {
   try {
     await jsonFetch(`${BASE_URL}/healthz`, { timeoutMs: 6000 });
-  } catch {
+  } catch (e) {
     try {
       await jsonFetch(`${BASE_URL}/health/db`, { timeoutMs: 6000 });
-    } catch {}
+    } catch (e2) {}
   }
   return { ok: true };
 }
@@ -658,4 +657,58 @@ export async function checkOfferMatchStatus(token: string, offerId: string) {
   } catch {
     return { status: "pending" as const };
   }
+}
+
+/* ---------------------------- Assignment Details ---------------------------- */
+
+export type DriverBrief = {
+  id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  rating?: number | null;
+  vehicle_type?: string | null;
+  avatar_url?: string | null;
+};
+
+export type RequestBrief = {
+  id: string;
+  type: "package" | "ride" | "passenger";
+  from_address?: string | null;
+  to_address?: string | null;
+  passengers?: number | null;
+  pickup_contact_name?: string | null;
+  pickup_contact_phone?: string | null;
+};
+
+export type LastLocation = {
+  lat: number;
+  lng: number;
+  updated_at: string; // ISO
+};
+
+export type AssignmentDetailOut = {
+  assignment_id: string;
+  request_id: string;
+  status: string;
+  assigned_at: string; // ISO
+  picked_up_at?: string | null;
+  in_transit_at?: string | null;
+  completed_at?: string | null;
+  failed_at?: string | null;
+  cancelled_at?: string | null;
+  onchain_tx_hash?: string | null;
+
+  driver: DriverBrief; // always present
+  requester?: DriverBrief | null; // NEW: the request owner (sender/rider)
+  last_location?: LastLocation | null;
+  // NEW:
+  request: RequestBrief;
+};
+
+export async function getAssignmentByRequest(
+  requestId: string
+): Promise<AssignmentDetailOut> {
+  return jsonFetch<AssignmentDetailOut>(
+    `${BASE_URL}/assignments/by-request/${encodeURIComponent(requestId)}`
+  );
 }

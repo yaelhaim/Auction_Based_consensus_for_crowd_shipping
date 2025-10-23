@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends
 from typing import List, Dict, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, text
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+import logging, json  # structured match logs
 
 # get_db – תואם מבנה פרויקט שונה
 try:
@@ -30,6 +31,9 @@ except Exception:
     from Backend.services.push import send_expo_async, fire_and_forget  # type: ignore
 
 router = APIRouter(prefix="/auction", tags=["auction"])
+
+# Logger for structured “match” lines (configured in Backend/main.py)
+match_logger = logging.getLogger("match")
 
 # ------------------------- Push defer helpers -------------------------
 
@@ -65,7 +69,7 @@ def _should_send_push_driver(db: Session, driver_user_id: str) -> bool:
 
 def _norm_req_type(t: str) -> str:
     """
-    Normalize request.type to the two supply families the drivers publish:
+    Normalize request.type:
     - 'ride' and 'passenger' → 'passenger'
     - 'package' → 'package'
     """
@@ -96,10 +100,6 @@ def _minutes(ts: datetime | None) -> float | None:
     return None if ts is None else ts.timestamp() / 60.0
 
 def _windows_overlap(req_start_min, req_end_min, off_start_min, off_end_min) -> bool:
-    """
-    אם לבקשה אין חלון מלא – נתייחס כגמיש (True).
-    מאפשרים טולרנס (±_TOL_MIN דק') כדי לא ליפול על שניות.
-    """
     if req_start_min is None or req_end_min is None:
         return True
     tol = _TOL_MIN
@@ -288,10 +288,9 @@ def run_clearing_tick(
         if old_i in old_to_new:
             price_per_pair_pruned[(old_to_new[old_i], j)] = p
 
-    # ---- NEW: גבול K = מספר הנהגים (כשיש יותר בקשות כשירות מנהגים) ----
+    # ---- גבול K = מספר הנהגים (כשיש יותר בקשות כשירות מנהגים) ----
     max_assign = len(drivers_rows)
     if len(asks_pruned) > max_assign and max_assign > 0:
-        # בוחרים את K הבקשות "הטובות": קודם מחיר תחתון, ואז לפי window_start
         sel = sorted(
             range(len(asks_pruned)),
             key=lambda i: (price_lb_pruned[i], asks_pruned[i].window_start or 0)
@@ -304,7 +303,6 @@ def run_clearing_tick(
         allowed_pruned  = _take(allowed_pruned)
         price_lb_pruned = _take(price_lb_pruned)
 
-        # מיפוי מחדש של price_per_pair_pruned לאינדקסים החדשים
         idx_map = {old_i: new_i for new_i, old_i in enumerate(sel)}
         price_per_pair_pruned = {
             (idx_map[i], j): p
@@ -334,6 +332,9 @@ def run_clearing_tick(
 
     # Persist
     pruned_to_row = {new_i: req_rows[old_i] for old_i, new_i in old_to_new.items()}
+    # map כל הבקשות לפי id כדי להשתמש בלוגים בלי SELECT נוסף
+    row_by_id: Dict[str, Requests] = {str(r.id): r for r in req_rows}
+
     results = []
     for (new_i, drv_j) in plan:
         req_row = pruned_to_row[new_i]
@@ -361,11 +362,18 @@ def run_clearing_tick(
                     req_row.window_start is None
                     or req_row.window_end is None
                     or (
-                        off.window_start <= req_row.window_end
+                        # בטוח ל-None גם בצד ההצעה
+                        off.window_start is not None
+                        and off.window_end is not None
+                        and off.window_start <= req_row.window_end
                         and off.window_end >= req_row.window_start
                     )
                 )
-                and (req_row.max_price is None or off.min_price is None or float(off.min_price) <= float(req_row.max_price))
+                and (
+                    req_row.max_price is None
+                    or off.min_price is None
+                    or float(off.min_price) <= float(req_row.max_price)
+                )
             ]
             if m_offers:
                 m_offers.sort(key=lambda o: float(o.min_price or 0))
@@ -379,6 +387,41 @@ def run_clearing_tick(
         )
 
     db.commit()
+
+    # ---- Structured logs per match (owner name + addresses, no extra SELECTs) ----
+    for m in results:
+        try:
+            req_row = row_by_id.get(m["request_id"])
+            owner_name = None
+            owner_user_id = None
+            if req_row and req_row.owner_user_id:
+                owner_user_id = str(req_row.owner_user_id)
+                owner_row = (
+                    db.query(Users)
+                    .filter(Users.id == req_row.owner_user_id)
+                    .first()
+                )
+                if owner_row:
+                    first = getattr(owner_row, "first_name", "") or ""
+                    last = getattr(owner_row, "last_name", "") or ""
+                    owner_name = f"{first} {last}".strip() or None
+
+            match_logger.info(json.dumps({
+                "event": "match_found",
+                "request_id": m["request_id"],
+                "driver_user_id": m["driver_user_id"],
+                "owner_user_id": owner_user_id,
+                "owner_name": owner_name,
+                "request_type": getattr(req_row, "type", None) if req_row else None,
+                "from_address": getattr(req_row, "from_address", None) if req_row else None,
+                "to_address": getattr(req_row, "to_address", None) if req_row else None,
+                "ts": int(datetime.now(timezone.utc).timestamp()),
+                "objective": total_penalty,
+                "debug": dbg,
+            }, ensure_ascii=False))
+        except Exception:
+            # Don't break clearing on logging issues
+            pass
 
     # Push notifications (owner + driver of each match) — only if defer window passed
     for m in results:
@@ -394,8 +437,8 @@ def run_clearing_tick(
         ).fetchone()
         owner_id = str(owner_row[0]) if owner_row else None
 
-        # ----- FIX: cast id to text so it matches the text[] parameter passed to ANY() -----
-        ids_list = list({x for x in [owner_id, drv_id] if x})  # unique & non-empty
+        # cast id to text so it matches text[] ANY(:ids)
+        ids_list = list({x for x in [owner_id, drv_id] if x})
         tokens = {}
         if ids_list:
             rows = db.execute(

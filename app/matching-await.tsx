@@ -137,7 +137,6 @@ export default function MatchingAwait() {
 
   // Navigate to the assignment details screen we created (app/assignment_details.tsx)
   function openAssignment() {
-    // If assignmentId is missing, we still navigate with requestId; the screen can fetch by requestId.
     router.replace({
       pathname: "/assignment_details",
       params: {
@@ -148,6 +147,8 @@ export default function MatchingAwait() {
       },
     });
   }
+
+  const ctaDisabled = !requestId; // practically always true-but-safe guard
 
   return (
     <WaitBackground
@@ -174,7 +175,11 @@ export default function MatchingAwait() {
             <Text style={S.bigEmoji}>🎉</Text>
             <Text style={S.title}>נמצאה התאמה!</Text>
             <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
-            <TouchableOpacity style={S.cta} onPress={openAssignment}>
+            <TouchableOpacity
+              style={[S.cta, ctaDisabled && { opacity: 0.6 }]}
+              onPress={openAssignment}
+              disabled={ctaDisabled}
+            >
               <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>

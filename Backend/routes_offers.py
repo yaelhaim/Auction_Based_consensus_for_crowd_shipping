@@ -1,12 +1,13 @@
-# Backend/routes_offers.py
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel, Field
+
 from typing import Optional, List, Literal, Any
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from .Database.db import get_db
 from Backend.auth_dep import get_current_user
@@ -28,7 +29,6 @@ def _get_user_id(user: Any) -> str:
         if not uid:
             raise HTTPException(status_code=401, detail="Invalid user payload (no id)")
         return str(uid)
-    # אובייקט עם מאפיין id
     uid = getattr(user, "id", None)
     if not uid:
         raise HTTPException(status_code=401, detail="Invalid user payload (no id)")
@@ -37,7 +37,7 @@ def _get_user_id(user: Any) -> str:
 # ---------- Schemas ----------
 
 class OfferCreate(BaseModel):
-    # שמים לב: לא מקבלים driver_user_id מהקליינט – נלקח מה-JWT
+    # לא מקבלים driver_user_id מהקליינט – נלקח מה-JWT
     from_address: str
     to_address: Optional[str] = None
     window_start: datetime
@@ -65,8 +65,8 @@ class OfferRow(BaseModel):
 @router.post("/offers", status_code=status.HTTP_201_CREATED)
 async def create_offer(
     payload: OfferCreate,
-    db = Depends(get_db),
-    user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
 ):
     user_id = _get_user_id(user)
 
@@ -96,7 +96,7 @@ async def create_offer(
         "to_lon": to_lon,
         "window_start": payload.window_start,
         "window_end": payload.window_end,
-        "min_price": str(payload.min_price),  # NUMERIC כטקסט
+        "min_price": str(payload.min_price),  # NUMERIC → טקסט
         "types": payload.types,
         "notes": payload.notes,
         "status": "active",
@@ -124,15 +124,9 @@ async def create_offer(
     """)
 
     try:
-        if hasattr(db, "execute"):
-            result = db.execute(sql, params)
-            row = result.mappings().first()
-            if hasattr(db, "commit"):
-                db.commit()
-        else:
-            res = await db.execute(sql, params)
-            row = res.mappings().first()
-            await db.commit()
+        res = db.execute(sql, params)
+        row = res.mappings().first()
+        db.commit()
     except Exception as e:
         print("[/offers] insert error:", repr(e))
         raise HTTPException(status_code=400, detail=str(e))
@@ -149,8 +143,8 @@ async def list_my_offers(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    db = Depends(get_db),
-    user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
 ):
     """
     מחזיר את ההצעות של הנהג המחובר (לפי JWT).
@@ -180,23 +174,18 @@ async def list_my_offers(
     if status:
         params["status"] = status
 
-    if hasattr(db, "execute"):
-        res = db.execute(text(base_sql), params)
-        rows = [dict(r._mapping) for r in res]  # to plain dicts
-    else:
-        res = await db.execute(text(base_sql), params)
-        rows = [dict(r._mapping) for r in res]
-
+    res = db.execute(text(base_sql), params)
+    rows = [dict(r._mapping) for r in res]
     return rows
 
+# ---------- POST /offers/{offer_id}/defer_push ----------
 
-# ---------- NEW: POST /offers/{offer_id}/defer_push ----------
 @router.post("/offers/{offer_id}/defer_push")
 async def defer_push_for_offer(
     offer_id: str,
     seconds: int = Query(60, ge=0, le=600),
-    db = Depends(get_db),
-    user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
 ):
     """
     שומר עיכוב פוש עבור ההצעה הזו: courier_offers.push_defer_until = now + seconds.
@@ -207,11 +196,7 @@ async def defer_push_for_offer(
     # ודא שההצעה שייכת לנהג המחובר
     sel = text("SELECT driver_user_id FROM courier_offers WHERE id = :oid")
     try:
-        if hasattr(db, "execute"):
-            row = db.execute(sel, {"oid": offer_id}).mappings().first()
-        else:
-            res = await db.execute(sel, {"oid": offer_id})
-            row = res.mappings().first()
+        row = db.execute(sel, {"oid": offer_id}).mappings().first()
     except Exception as e:
         print("[/offers/defer_push] select error:", repr(e))
         raise HTTPException(400, "failed to load offer")
@@ -225,13 +210,8 @@ async def defer_push_for_offer(
     upd = text("UPDATE courier_offers SET push_defer_until = :ts WHERE id = :oid")
 
     try:
-        if hasattr(db, "execute"):
-            db.execute(upd, {"ts": defer_until, "oid": offer_id})
-            if hasattr(db, "commit"):
-                db.commit()
-        else:
-            await db.execute(upd, {"ts": defer_until, "oid": offer_id})
-            await db.commit()
+        db.execute(upd, {"ts": defer_until, "oid": offer_id})
+        db.commit()
     except Exception as e:
         print("[/offers/defer_push] update error:", repr(e))
         raise HTTPException(
@@ -241,28 +221,29 @@ async def defer_push_for_offer(
 
     return {"ok": True, "push_defer_until": defer_until.isoformat()}
 
+# ---------- GET /offers/{offer_id}/match_status ----------
 
-# ---------- NEW: GET /offers/{offer_id}/match_status ----------
 @router.get("/offers/{offer_id}/match_status")
 async def offer_match_status(
     offer_id: str,
-    db = Depends(get_db),
-    user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
 ):
+    """
+    מחזיר סטטוס התאמה להצעה + מזהי assignment/request אם קיימים.
+    שימוש בערכי ENUM הנכונים בטבלת assignments: ('created','picked_up','in_transit')
+    הוסר סינון הזמן כדי לא לפספס שיוכים.
+    """
     uid = _get_user_id(user)
 
-    # 1) טען הצעה (שייכות + created_at)
+    # 1) טען הצעה (שייכות + created_at + status)
     sel = text("""
         SELECT driver_user_id, created_at, status
         FROM courier_offers
         WHERE id = :oid
     """)
     try:
-        if hasattr(db, "execute"):
-            off = db.execute(sel, {"oid": offer_id}).mappings().first()
-        else:
-            res = await db.execute(sel, {"oid": offer_id})
-            off = res.mappings().first()
+        off = db.execute(sel, {"oid": offer_id}).mappings().first()
     except Exception as e:
         print("[/offers/match_status] select error:", repr(e))
         return {"status": "none"}
@@ -270,25 +251,21 @@ async def offer_match_status(
     if not off or str(off["driver_user_id"]) != uid:
         return {"status": "none"}
 
-    # 2) נסה למצוא הקצאה חדשה לנהג מאז יצירת ההצעה (כמו קודם)
-    asg_sql = text("""
+    # 2) מצא הקצאה פעילה לנהג – בלי תלות בזמן
+    active_statuses_sql = "('created','picked_up','in_transit')"
+    asg_sql = text(f"""
         SELECT id AS assignment_id, request_id
         FROM assignments
         WHERE driver_user_id = :uid
-          AND status IN ('created','assigned','in_progress')
-          AND assigned_at >= :from_ts
+          AND status IN {active_statuses_sql}
         ORDER BY assigned_at DESC
         LIMIT 1
     """)
+    row = None
     try:
-        if hasattr(db, "execute"):
-            row = db.execute(asg_sql, {"uid": uid, "from_ts": off["created_at"]}).mappings().first()
-        else:
-            res = await db.execute(asg_sql, {"uid": uid, "from_ts": off["created_at"]})
-            row = res.mappings().first()
+        row = db.execute(asg_sql, {"uid": uid}).mappings().first()
     except Exception as e:
         print("[/offers/match_status] asg select error:", repr(e))
-        row = None
 
     if row:
         return {
@@ -297,16 +274,15 @@ async def offer_match_status(
             "request_id": str(row["request_id"]),
         }
 
-    # 3)Fallback אמין: אם ההצעה עצמה כבר סומנה כ-assigned → יש התאמה
+    # 3) Fallback: אם ההצעה עצמה סומנה assigned – נחפש הקצאה אחרונה (12 שעות)
     try:
         if str(off.get("status")) == "assigned":
-            # נמצא את ההקצאה האחרונה של הנהג (ב-12 שעות אחרונות) כדי להחזיר request_id
-            last_asg = db.execute(text("""
+            last_asg = db.execute(text(f"""
                 SELECT id AS assignment_id, request_id
                 FROM assignments
                 WHERE driver_user_id = :uid
-                  AND status IN ('created','assigned','in_progress')
-                  AND assigned_at >= (NOW() - INTERVAL '12 hours')
+                  AND status IN {active_statuses_sql}
+                  AND assigned_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '12 hours')
                 ORDER BY assigned_at DESC
                 LIMIT 1
             """), {"uid": uid}).mappings().first()
@@ -316,10 +292,9 @@ async def offer_match_status(
                     "assignment_id": str(last_asg["assignment_id"]),
                     "request_id": str(last_asg["request_id"]),
                 }
-            # אם משום מה אין הקצאה בטבלה – עדיין החזר matched כדי שהמסך יסגור יפה
             return {"status": "matched"}
     except Exception as e:
         print("[/offers/match_status] fallback-by-offer error:", repr(e))
 
-    # 4) אחרת – עדיין ממתינים
+    # 4) עדיין ממתינים
     return {"status": "pending"}

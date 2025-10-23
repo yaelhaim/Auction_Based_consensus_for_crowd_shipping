@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-import logging
+import logging, sys, os
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends
@@ -28,6 +29,7 @@ from .routes_requests import router as requests_router
 from .routes_offers import router as offers_router
 from .routes_devices import router as devices_router
 from .routes_auction import router as auction_router
+from .routes_assignments import router as assignments_router
 
 # Clearing tick (IDA*)
 try:
@@ -41,6 +43,29 @@ except Exception:
 # APScheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+
+# --------------------------- Logging setup ---------------------------
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+def _setup_logger(name: str, filename: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+    # file (rotating)
+    fh = RotatingFileHandler(os.path.join(LOG_DIR, filename), maxBytes=2_000_000, backupCount=5, encoding="utf-8")
+    fh.setFormatter(fmt)
+    # stdout (docker/k8s)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    # avoid duplicate handlers on reload
+    if not logger.handlers:
+        logger.addHandler(fh)
+        logger.addHandler(sh)
+    return logger
+
+_setup_logger("clearing", "clearing.log")
+_setup_logger("match", "matches.log")
 
 logger = logging.getLogger("clearing")
 scheduler = AsyncIOScheduler()
@@ -63,7 +88,6 @@ def _clearing_job():
 async def lifespan(app: FastAPI):
     # ---- Startup ----
     try:
-        # every 60s; tweak seconds as needed
         scheduler.add_job(_clearing_job, IntervalTrigger(seconds=60))
         scheduler.start()
         logger.info("Scheduler started (IDA* every 60s)")
@@ -119,3 +143,4 @@ app.include_router(requests_router)
 app.include_router(offers_router)
 app.include_router(devices_router)
 app.include_router(auction_router)
+app.include_router(assignments_router)

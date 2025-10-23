@@ -1,6 +1,4 @@
-// app/matching-await-driver.tsx
 // Driver waiting screen with city-map background + white card + hourglass.
-// Uses listMyCourierOffers + checkOfferMatchStatus to detect 'matched' and navigates to assignment details.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
@@ -44,12 +42,10 @@ export default function MatchingAwaitDriver() {
     if (!offerId || !token) return;
 
     async function start() {
-      // Establish a soft deadline for polling
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
 
-      // Defer push notifications for this offer while the user is on this screen
       try {
         const resp = await deferPushForOffer(
           String(token),
@@ -68,7 +64,6 @@ export default function MatchingAwaitDriver() {
         );
       }
 
-      // Fire a non-blocking clearing tick (IDA*)
       clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
         .then((r) =>
           console.log(
@@ -85,9 +80,7 @@ export default function MatchingAwaitDriver() {
           )
         );
 
-      // Polling loop: first try the dedicated endpoint, then fallback to list
       async function poll() {
-        // 1) Ask backend if this offer is matched (and to which request/assignment)
         try {
           const raw = await checkOfferMatchStatus(
             String(token),
@@ -112,18 +105,19 @@ export default function MatchingAwaitDriver() {
           );
         }
 
-        // 2) Fallback: is this offer already 'assigned' in my offers?
         try {
           const assigned: CourierOfferRow[] = await listMyCourierOffers(
             String(token),
-            { status: "assigned", limit: 50 }
+            {
+              status: "assigned",
+              limit: 50,
+            }
           );
           if (!cancelled && Array.isArray(assigned) && assigned.length > 0) {
             const found = assigned.find(
               (o) => String(o.id) === String(offerId)
             );
             if (found) {
-              // requestId may not be present in the offer row; we keep whatever we have.
               setStatus("matched");
               return;
             }
@@ -135,7 +129,6 @@ export default function MatchingAwaitDriver() {
           );
         }
 
-        // 3) Continue polling or timeout
         const stopAt =
           deadlineRef.current ?? Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
         if (Date.now() >= stopAt) {
@@ -159,7 +152,6 @@ export default function MatchingAwaitDriver() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
 
-  // Navigate to shared assignment details screen (driver’s perspective)
   function openAssignment() {
     router.replace({
       pathname: "/assignment_details",
@@ -172,6 +164,9 @@ export default function MatchingAwaitDriver() {
       },
     });
   }
+
+  // תמיד מאפשרים ללחוץ כשסטטוס matched – המסך הבא ישלים נתונים גם בלי מזהים
+  const ctaDisabled = false;
 
   return (
     <WaitBackground
@@ -198,8 +193,14 @@ export default function MatchingAwaitDriver() {
             <Text style={S.bigEmoji}>🎉</Text>
             <Text style={S.title}>נמצאה משימה!</Text>
             <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
-            <TouchableOpacity style={S.cta} onPress={openAssignment}>
-              <Text style={S.ctaText}>פתח/י את המשימה</Text>
+            <TouchableOpacity
+              style={[S.cta, !requestId && !assignmentId && { opacity: 0.85 }]}
+              onPress={openAssignment}
+              disabled={ctaDisabled}
+            >
+              <Text style={S.ctaText}>
+                {requestId || assignmentId ? "פתח/י את המשימה" : "מעדכן פרטים…"}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>דף הבית</Text>
