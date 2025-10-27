@@ -30,6 +30,7 @@ from .routes_offers import router as offers_router
 from .routes_devices import router as devices_router
 from .routes_auction import router as auction_router
 from .routes_assignments import router as assignments_router
+from .routes_matching import router as matching_router
 
 # Clearing tick (IDA*)
 try:
@@ -144,3 +145,4 @@ app.include_router(offers_router)
 app.include_router(devices_router)
 app.include_router(auction_router)
 app.include_router(assignments_router)
+app.include_router(matching_router)

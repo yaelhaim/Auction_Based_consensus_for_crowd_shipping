@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends
 from typing import List, Dict, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, text
+from sqlalchemy.exc import OperationalError
 from datetime import datetime, timezone
-import logging, json  # structured match logs
+import logging, json, time
 
-# get_db – תואם מבנה פרויקט שונה
+# get_db – compatible with different project layouts
 try:
     from .Database.db import get_db
     from .models import Users, Requests, Assignments, CourierOffers
@@ -35,6 +36,7 @@ router = APIRouter(prefix="/auction", tags=["auction"])
 # Logger for structured “match” lines (configured in Backend/main.py)
 match_logger = logging.getLogger("match")
 
+
 # ------------------------- Push defer helpers -------------------------
 
 def _should_send_push_request(db: Session, request_id: str) -> bool:
@@ -48,6 +50,7 @@ def _should_send_push_request(db: Session, request_id: str) -> bool:
     if ts is None:
         return True
     return datetime.now(timezone.utc) >= ts
+
 
 def _should_send_push_driver(db: Session, driver_user_id: str) -> bool:
     row = db.execute(
@@ -65,6 +68,7 @@ def _should_send_push_driver(db: Session, driver_user_id: str) -> bool:
         return True
     return datetime.now(timezone.utc) >= ts
 
+
 # ------------------------- Type normalization -------------------------
 
 def _norm_req_type(t: str) -> str:
@@ -78,10 +82,11 @@ def _norm_req_type(t: str) -> str:
         return "passenger"
     return "package"
 
+
 def _type_matches(req_t: str, offer_types: list[str] | None) -> bool:
     """
-    Driver publishes ARRAY(TEXT) like ['package'] or ['package','passenger'].
-    We compare in lowercase and allow ride≈passenger.
+    Offer stores ARRAY(TEXT), e.g. ['package'] or ['package','passenger'].
+    We compare lowercase and allow ride≈passenger.
     """
     if not offer_types:
         return False
@@ -92,9 +97,10 @@ def _type_matches(req_t: str, offer_types: list[str] | None) -> bool:
         return "package" in norm
     return False
 
+
 # ------------------------- Time overlap with tolerance -------------------------
 
-_TOL_MIN = 20  # דקות של טולרנס לחפיפה
+_TOL_MIN = 20  # minutes tolerance
 
 def _minutes(ts: datetime | None) -> float | None:
     return None if ts is None else ts.timestamp() / 60.0
@@ -104,6 +110,7 @@ def _windows_overlap(req_start_min, req_end_min, off_start_min, off_end_min) -> 
         return True
     tol = _TOL_MIN
     return (off_start_min <= (req_end_min + tol)) and (off_end_min + tol >= req_start_min)
+
 
 # ------------------------- Main clearing -------------------------
 
@@ -169,10 +176,10 @@ def run_clearing_tick(
     if not drivers_rows:
         return {"cleared": False, "reason": "no valid drivers for offers"}
 
-    # Driver anchor: use first request pickup (אין לנו מיקום חי של נהגים)
+    # Driver anchor: use first request pickup (no live driver GPS)
     anchor_point = Point(float(req_rows[0].from_lat), float(req_rows[0].from_lon))
 
-    # Build driver states (capacity=1 ל-MVP)
+    # Build driver states (capacity=1 for MVP)
     drivers: List[DriverState] = []
     driver_index_by_id: Dict[str, int] = {}
     for j, u in enumerate(drivers_rows):
@@ -192,7 +199,7 @@ def run_clearing_tick(
     for off in offer_rows:
         offers_by_driver.setdefault(str(off.driver_user_id), []).append(off)
 
-    # Debug counters (יעזרו להבין למה אין התאמות)
+    # Debug counters (help understand why there are no matches)
     dbg_counts = {
         "total_pairs_checked": 0,
         "filtered_by_type": 0,
@@ -228,14 +235,14 @@ def run_clearing_tick(
                     dbg_counts["filtered_by_time"] += 1
                     continue
 
-                # price: אם לבקשה אין תקרה (None או 0) – לא מסננים
+                # price: if request has no cap (None/0) → do not filter
                 req_cap = None
                 try:
                     req_cap = float(r.max_price) if r.max_price is not None else None
                 except Exception:
                     req_cap = None
                 if req_cap is not None and req_cap <= 0:
-                    req_cap = None  # treat 0 as "no cap"
+                    req_cap = None
 
                 off_min = None
                 try:
@@ -247,7 +254,7 @@ def run_clearing_tick(
                     dbg_counts["filtered_by_price"] += 1
                     continue
 
-                # reached here = feasible
+                # feasible
                 if off_min is not None:
                     if best_for_driver is None or off_min < best_for_driver:
                         best_for_driver = off_min
@@ -288,7 +295,7 @@ def run_clearing_tick(
         if old_i in old_to_new:
             price_per_pair_pruned[(old_to_new[old_i], j)] = p
 
-    # ---- גבול K = מספר הנהגים (כשיש יותר בקשות כשירות מנהגים) ----
+    # K bound = number of drivers
     max_assign = len(drivers_rows)
     if len(asks_pruned) > max_assign and max_assign > 0:
         sel = sorted(
@@ -324,45 +331,85 @@ def run_clearing_tick(
         weights=weights,
         rating_max=5.0,
         allowed_drivers_per_ask=allowed_pruned,
-        bid_amounts=price_per_pair_pruned,  # כאן "bid" = offer.min_price
+        bid_amounts=price_per_pair_pruned,  # here "bid" == offer.min_price
         price_lb_per_ask=price_lb_pruned,
     )
     if not plan:
         return {"cleared": False, "reason": "no optimal plan found", "debug": dbg, "debug_counts": dbg_counts}
 
-    # Persist
+    # ---------------------------------------------------------------------
+    # Persist (deadlock-safe):
+    #  - Lock the request row first (FOR UPDATE SKIP LOCKED) in a CTE
+    #  - Insert into assignments only if we successfully locked an OPEN request
+    #  - Update request status to 'assigned' in the same statement
+    #  - Retry on deadlocks a few times with small backoff
+    # ---------------------------------------------------------------------
     pruned_to_row = {new_i: req_rows[old_i] for old_i, new_i in old_to_new.items()}
-    # map כל הבקשות לפי id כדי להשתמש בלוגים בלי SELECT נוסף
     row_by_id: Dict[str, Requests] = {str(r.id): r for r in req_rows}
-
     results = []
-    for (new_i, drv_j) in plan:
-        req_row = pruned_to_row[new_i]
-        drv_user = drivers_rows[drv_j]
+    assigned_ts = datetime.now(timezone.utc)
 
-        db.add(
-            Assignments(
-                request_id=req_row.id,
-                driver_user_id=drv_user.id,
-                status="created",
-                assigned_at=datetime.now(timezone.utc),
-            )
+    # Single statement that locks -> inserts -> updates, avoiding cross-locks
+    claim_sql = text("""
+        WITH locked AS (
+            SELECT id
+            FROM requests
+            WHERE id = :rid AND status = 'open'
+            FOR UPDATE SKIP LOCKED
+        ), ins AS (
+            INSERT INTO assignments (request_id, driver_user_id, assigned_at, status)
+            SELECT :rid, :uid, :ts, CAST(:st AS assignment_status)
+            FROM locked
+            ON CONFLICT (request_id) DO NOTHING
+            RETURNING request_id
         )
+        UPDATE requests r
+        SET status = 'assigned'
+        FROM ins
+        WHERE r.id = ins.request_id
+        RETURNING r.id::text AS request_id
+    """)
 
-        # Update request status
-        req_row.status = "assigned"
+    def _try_claim_once(rid: str, uid: str) -> bool:
+        row = db.execute(
+            claim_sql,
+            {"rid": rid, "uid": uid, "ts": assigned_ts, "st": "created"},
+        ).mappings().first()
+        return bool(row and row.get("request_id"))
 
-        # Optionally mark cheapest matching offer as assigned (respect remap and overlap)
+    for (new_i, drv_j) in plan:
+        rid = str(pruned_to_row[new_i].id)
+        uid = str(drivers_rows[drv_j].id)
+
+        # Small retry loop for deadlocks/transient errors
+        claimed = False
+        for attempt in range(3):
+            try:
+                if _try_claim_once(rid, uid):
+                    claimed = True
+                break
+            except OperationalError as e:
+                if "deadlock detected" in str(e).lower() and attempt < 2:
+                    # brief sleep then retry
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
+
+        if not claimed:
+            # Someone else claimed/assigned it (or we skipped due to lock) → skip
+            continue
+
+        # Optionally mark the cheapest consistent offer as assigned
         if mark_offer_assigned:
+            req_row = pruned_to_row[new_i]
             m_offers = [
                 off
-                for off in offers_by_driver[str(drv_user.id)]
+                for off in offers_by_driver.get(uid, [])
                 if _type_matches(_norm_req_type(str(req_row.type)), off.types)
                 and (
                     req_row.window_start is None
                     or req_row.window_end is None
                     or (
-                        # בטוח ל-None גם בצד ההצעה
                         off.window_start is not None
                         and off.window_end is not None
                         and off.window_start <= req_row.window_end
@@ -379,16 +426,11 @@ def run_clearing_tick(
                 m_offers.sort(key=lambda o: float(o.min_price or 0))
                 m_offers[0].status = "assigned"
 
-        results.append(
-            {
-                "request_id": str(req_row.id),
-                "driver_user_id": str(drv_user.id),
-            }
-        )
+        results.append({"request_id": rid, "driver_user_id": uid})
 
     db.commit()
 
-    # ---- Structured logs per match (owner name + addresses, no extra SELECTs) ----
+    # ---- Structured logs per match (owner name + addresses) ----
     for m in results:
         try:
             req_row = row_by_id.get(m["request_id"])
@@ -423,7 +465,7 @@ def run_clearing_tick(
             # Don't break clearing on logging issues
             pass
 
-    # Push notifications (owner + driver of each match) — only if defer window passed
+    # Push notifications (owner + driver) — only if defer window passed
     for m in results:
         req_id = m["request_id"]
         drv_id = m["driver_user_id"]
@@ -437,7 +479,6 @@ def run_clearing_tick(
         ).fetchone()
         owner_id = str(owner_row[0]) if owner_row else None
 
-        # cast id to text so it matches text[] ANY(:ids)
         ids_list = list({x for x in [owner_id, drv_id] if x})
         tokens = {}
         if ids_list:
@@ -483,6 +524,7 @@ def run_clearing_tick(
         "debug": dbg,
         "debug_counts": dbg_counts,
     }
+
 
 @router.post("/clear")
 def clear_market_endpoint(

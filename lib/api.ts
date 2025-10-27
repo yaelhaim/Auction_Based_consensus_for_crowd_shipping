@@ -1,9 +1,6 @@
 // app/lib/api.ts
 // Unified API client for BidDrop (Expo).
-// - One BASE_URL for all calls
-// - Strong logging (method, URL, body, status)
-// - Timeouts + better error messages
-// - Types aligned with DB (requests incl. max_price & pickup_contact_*)
+// Comments are in English (as requested). User-facing strings are in Hebrew.
 
 import Constants from "expo-constants";
 
@@ -219,25 +216,24 @@ export async function upsertProfile(
 export type RequestRow = {
   id: string;
   owner_user_id: string;
-  type: "package" | "ride" | "passenger"; // include passenger to reflect backend
+  type: "package" | "ride" | "passenger";
   from_address: string;
   from_lat?: number | null;
   from_lon?: number | null;
   to_address: string;
   to_lat?: number | null;
   to_lon?: number | null;
-  passengers?: number | null; // present if came from rider flow
+  passengers?: number | null;
   notes?: string | null;
-  window_start?: string | null; // ISO string
-  window_end?: string | null; // ISO string
+  window_start?: string | null;
+  window_end?: string | null;
   status: CommonStatus;
-  created_at: string; // ISO
-  updated_at: string; // ISO
+  created_at: string;
+  updated_at: string;
 
-  // Columns often used in UI:
-  max_price?: number | null; // NUMERIC(10,2) → number in JSON
-  pickup_contact_name?: string | null; // VARCHAR(100)
-  pickup_contact_phone?: string | null; // VARCHAR(32)
+  max_price?: number | null;
+  pickup_contact_name?: string | null;
+  pickup_contact_phone?: string | null;
 };
 
 export type SenderMetrics = {
@@ -247,7 +243,6 @@ export type SenderMetrics = {
   cancelled_count?: number;
 };
 
-// UI buckets exposed by the API
 export type SenderBucket = "open" | "active" | "delivered";
 
 export async function getSenderMetrics(token: string): Promise<SenderMetrics> {
@@ -270,7 +265,6 @@ export async function listSenderRequests(
     `${BASE_URL}/sender/requests?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
-  // normalize status just in case
   return rows.map((r) => ({
     ...r,
     status: normalizeStatus(r.status),
@@ -291,20 +285,17 @@ export type CourierJobRow = {
   distance_km?: number | null;
   suggested_pay?: string | number | null;
   notes?: string | null;
-  created_at: string; // ISO
+  created_at: string;
 };
 
-/** KPIs for courier dashboard. */
 export type CourierMetrics = {
-  available_count: number; // jobs you can pick
-  active_count: number; // currently delivering
-  delivered_count: number; // completed by you
+  available_count: number;
+  active_count: number;
+  delivered_count: number;
 };
 
-/** Tabs for courier list. */
 export type CourierBucket = "available" | "active" | "delivered";
 
-/** GET KPIs for courier. */
 export async function getCourierMetrics(
   token: string
 ): Promise<CourierMetrics> {
@@ -313,14 +304,13 @@ export async function getCourierMetrics(
   });
 }
 
-/** List courier jobs by bucket (server should filter by status/assignment). */
 export async function listCourierJobs(
   token: string,
   bucket: CourierBucket,
   opts: ListOpts = {}
 ): Promise<CourierJobRow[]> {
   const q = new URLSearchParams({
-    status: bucket, // "available" | "active" | "delivered"
+    status: bucket,
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
@@ -334,7 +324,6 @@ export async function listCourierJobs(
   })) as CourierJobRow[];
 }
 
-/** Optional: actions for courier lifecycle (wire when screens are ready). */
 export async function courierAcceptJob(token: string, jobId: string) {
   return jsonFetch<{ ok: true; job_id: string }>(
     `${BASE_URL}/courier/jobs/${encodeURIComponent(jobId)}/accept`,
@@ -358,9 +347,9 @@ export async function createCourierOffer(
   token: string,
   body: {
     from_address: string;
-    to_address?: string | null; // null = כל היעדים
-    window_start: string; // ISO
-    window_end: string; // ISO
+    to_address?: string | null;
+    window_start: string;
+    window_end: string;
     min_price: number;
     types: ("package" | "passenger")[];
     notes?: string | null;
@@ -387,14 +376,14 @@ export type CourierOfferRow = {
   driver_user_id?: string;
   from_address: string;
   to_address?: string | null;
-  window_start?: string | null; // ISO
-  window_end?: string | null; // ISO
-  min_price: string; // מגיע כטקסט מה-API (NUMERIC), תרצי -> parseFloat
+  window_start?: string | null;
+  window_end?: string | null;
+  min_price: string;
   types: ("package" | "passenger")[];
   notes?: string | null;
   status: "active" | "assigned" | "paused" | "completed" | "cancelled";
-  created_at: string; // ISO
-  updated_at: string; // ISO
+  created_at: string;
+  updated_at: string;
 };
 
 export async function listMyCourierOffers(
@@ -414,18 +403,17 @@ export async function listMyCourierOffers(
 
 // ------------------------------- Rider (rides) ------------------------------
 
-/** Rider requests (a rider looking to join a ride). */
 export type RiderRequestRow = {
   id: string;
-  status: CommonStatus; // normalized; legacy 'matched' → 'assigned'
+  status: CommonStatus;
   from_address: string;
   to_address: string;
   window_start?: string | null;
   window_end?: string | null;
-  passengers?: number | null; // requested seats
+  passengers?: number | null;
   notes?: string | null;
   max_price?: number | null;
-  created_at: string; // ISO
+  created_at: string;
 };
 
 export type RiderMetrics = {
@@ -435,7 +423,6 @@ export type RiderMetrics = {
   cancelled_count?: number;
 };
 
-/** Tabs for rider list. */
 export type RiderBucket = "open" | "active" | "completed";
 
 export async function getRiderMetrics(token: string): Promise<RiderMetrics> {
@@ -450,7 +437,7 @@ export async function listRiderRequests(
   opts: ListOpts = {}
 ): Promise<RiderRequestRow[]> {
   const q = new URLSearchParams({
-    status: bucket, // "open" | "active" | "completed"
+    status: bucket,
     limit: String(opts.limit ?? 50),
     offset: String(opts.offset ?? 0),
   });
@@ -464,12 +451,11 @@ export async function listRiderRequests(
   })) as RiderRequestRow[];
 }
 
-/** Rider – create new ride request. */
 export type CreateRiderPayload = {
   from_address: string;
   to_address: string;
-  window_start: string; // ISO
-  window_end: string; // ISO
+  window_start: string;
+  window_end: string;
   passengers: number;
   notes?: string | null;
   max_price?: number | null;
@@ -502,11 +488,11 @@ export async function riderCancelRequest(token: string, requestId: string) {
 // ---------------------------- Create Request API -----------------------------
 
 export type CreateRequestInput = {
-  type: "package" | "ride" | "passenger"; // keep 'passenger' for backward compat
+  type: "package" | "ride" | "passenger";
   from_address: string;
   to_address: string;
-  window_start: string; // ISO string
-  window_end: string; // ISO string
+  window_start: string;
+  window_end: string;
   notes?: string;
   max_price: number;
   pickup_contact_name?: string | null;
@@ -521,7 +507,7 @@ export type CreateRequestInput = {
 export type CreateRequestResponse = {
   id: string;
   status: string;
-  created_at: string; // ISO
+  created_at: string;
 };
 
 export async function createSenderRequest(
@@ -562,7 +548,7 @@ export async function clearAuctions(
 }
 
 export async function closeAuctionOnchain(payload: {
-  auction_id: string; // UUID as string
+  auction_id: string;
   winner_ss58?: string;
 }): Promise<{ ok: boolean; job_id: string }> {
   return jsonFetch<{ ok: boolean; job_id: string }>(
@@ -678,6 +664,9 @@ export type RequestBrief = {
   passengers?: number | null;
   pickup_contact_name?: string | null;
   pickup_contact_phone?: string | null;
+  window_start?: string | null;
+  window_end?: string | null;
+  notes?: string | null;
 };
 
 export type LastLocation = {
@@ -698,17 +687,63 @@ export type AssignmentDetailOut = {
   cancelled_at?: string | null;
   onchain_tx_hash?: string | null;
 
-  driver: DriverBrief; // always present
-  requester?: DriverBrief | null; // NEW: the request owner (sender/rider)
+  driver: DriverBrief;
+  requester?: DriverBrief | null;
   last_location?: LastLocation | null;
-  // NEW:
   request: RequestBrief;
 };
 
+/** Get assignment by request; optionally scope by offerId to avoid wrong matches (kept for compatibility, backend ignores offer_id if not supported). */
 export async function getAssignmentByRequest(
-  requestId: string
+  requestId: string,
+  offerId?: string
+): Promise<AssignmentDetailOut> {
+  const url =
+    `${BASE_URL}/assignments/by-request/${encodeURIComponent(requestId)}` +
+    (offerId ? `?offer_id=${encodeURIComponent(offerId)}` : "");
+  return jsonFetch<AssignmentDetailOut>(url);
+}
+
+/** Get assignment by its ID (preferred for driver flow). */
+export async function getAssignmentById(
+  assignmentId: string
 ): Promise<AssignmentDetailOut> {
   return jsonFetch<AssignmentDetailOut>(
-    `${BASE_URL}/assignments/by-request/${encodeURIComponent(requestId)}`
+    `${BASE_URL}/assignments/${encodeURIComponent(assignmentId)}`
   );
+}
+
+/* ----------------------------- Matching triggers ---------------------------- */
+/** Ask server to try and create a REAL assignment for a driver offer (atomic). */
+export async function runMatchingForOffer(token: string, offerId: string) {
+  const res = await jsonFetch<
+    | {
+        status: "matched";
+        message: string;
+        assignment_id: string;
+        request_id: string;
+      }
+    | { status: "no_match"; message: string }
+  >(`${BASE_URL}/match/offers/${encodeURIComponent(offerId)}/run`, {
+    method: "POST",
+    headers: { ...authHeaders(token) },
+  });
+  return res;
+}
+
+/** Ask server to try and create a REAL assignment for a request (atomic). */
+export async function runMatchingForRequest(token: string, requestId: string) {
+  const res = await jsonFetch<
+    | {
+        status: "matched";
+        message: string;
+        assignment_id: string;
+        request_id: string;
+      }
+    | { status: "no_match"; message: string }
+  >(`${BASE_URL}/match/requests/${encodeURIComponent(requestId)}/run`, {
+    method: "POST",
+    headers: { ...authHeaders(token) },
+  });
+  return res;
 }

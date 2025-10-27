@@ -230,71 +230,79 @@ async def offer_match_status(
     user: Any = Depends(get_current_user),
 ):
     """
-    מחזיר סטטוס התאמה להצעה + מזהי assignment/request אם קיימים.
-    שימוש בערכי ENUM הנכונים בטבלת assignments: ('created','picked_up','in_transit')
-    הוסר סינון הזמן כדי לא לפספס שיוכים.
+    Returns a status for THIS offer only.
+    Priority:
+      1) assignment with assignments.offer_id = :offer_id AND active status
+      2) (fallback) driver's latest active assignment where assigned_at >= offer.created_at
+         (to avoid returning stale matches from days ago)
+      3) pending
     """
-    uid = _get_user_id(user)
+    # 0) auth
+    uid = None
+    if isinstance(user, dict):
+        uid = user.get("id") or user.get("user_id")
+    else:
+        uid = getattr(user, "id", None)
+    if not uid:
+        return {"status": "none"}
+    uid = str(uid)
 
-    # 1) טען הצעה (שייכות + created_at + status)
-    sel = text("""
-        SELECT driver_user_id, created_at, status
-        FROM courier_offers
-        WHERE id = :oid
-    """)
-    try:
-        off = db.execute(sel, {"oid": offer_id}).mappings().first()
-    except Exception as e:
-        print("[/offers/match_status] select error:", repr(e))
+    # 1) load offer (ownership + created_at + status)
+    off = db.execute(
+        text("""
+            SELECT driver_user_id::text AS driver_user_id,
+                   created_at,
+                   status
+            FROM courier_offers
+            WHERE id = :oid
+        """),
+        {"oid": offer_id},
+    ).mappings().first()
+
+    if not off or off["driver_user_id"] != uid:
         return {"status": "none"}
 
-    if not off or str(off["driver_user_id"]) != uid:
-        return {"status": "none"}
-
-    # 2) מצא הקצאה פעילה לנהג – בלי תלות בזמן
+    # 2) exact-by-offer first
     active_statuses_sql = "('created','picked_up','in_transit')"
-    asg_sql = text(f"""
-        SELECT id AS assignment_id, request_id
-        FROM assignments
-        WHERE driver_user_id = :uid
-          AND status IN {active_statuses_sql}
-        ORDER BY assigned_at DESC
-        LIMIT 1
-    """)
-    row = None
-    try:
-        row = db.execute(asg_sql, {"uid": uid}).mappings().first()
-    except Exception as e:
-        print("[/offers/match_status] asg select error:", repr(e))
+    exact = db.execute(
+        text(f"""
+            SELECT id AS assignment_id, request_id
+            FROM assignments
+            WHERE offer_id = :oid
+              AND status IN {active_statuses_sql}
+            ORDER BY assigned_at DESC
+            LIMIT 1
+        """),
+        {"oid": offer_id},
+    ).mappings().first()
 
-    if row:
+    if exact:
         return {
             "status": "matched",
-            "assignment_id": str(row["assignment_id"]),
-            "request_id": str(row["request_id"]),
+            "assignment_id": str(exact["assignment_id"]),
+            "request_id": str(exact["request_id"]),
         }
 
-    # 3) Fallback: אם ההצעה עצמה סומנה assigned – נחפש הקצאה אחרונה (12 שעות)
-    try:
-        if str(off.get("status")) == "assigned":
-            last_asg = db.execute(text(f"""
-                SELECT id AS assignment_id, request_id
-                FROM assignments
-                WHERE driver_user_id = :uid
-                  AND status IN {active_statuses_sql}
-                  AND assigned_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '12 hours')
-                ORDER BY assigned_at DESC
-                LIMIT 1
-            """), {"uid": uid}).mappings().first()
-            if last_asg:
-                return {
-                    "status": "matched",
-                    "assignment_id": str(last_asg["assignment_id"]),
-                    "request_id": str(last_asg["request_id"]),
-                }
-            return {"status": "matched"}
-    except Exception as e:
-        print("[/offers/match_status] fallback-by-offer error:", repr(e))
+    # 3) fallback: latest active for this driver, but only AFTER the offer was created
+    created_at = off["created_at"]
+    recent = db.execute(
+        text(f"""
+            SELECT id AS assignment_id, request_id
+            FROM assignments
+            WHERE driver_user_id = :uid
+              AND status IN {active_statuses_sql}
+              AND assigned_at >= :created_at
+            ORDER BY assigned_at DESC
+            LIMIT 1
+        """),
+        {"uid": uid, "created_at": created_at},
+    ).mappings().first()
 
-    # 4) עדיין ממתינים
+    if recent:
+        return {
+            "status": "matched",
+            "assignment_id": str(recent["assignment_id"]),
+            "request_id": str(recent["request_id"]),
+        }
+
     return {"status": "pending"}

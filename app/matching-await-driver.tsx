@@ -1,4 +1,6 @@
-// Driver waiting screen with city-map background + white card + hourglass.
+// MatchingAwaitDriver.tsx
+// Strict match gating: require a VALID assignment_id (UUID or positive int).
+// No fallback. No navigation without a solid assignment id.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
@@ -6,9 +8,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   deferPushForOffer,
   checkOfferMatchStatus,
-  listMyCourierOffers,
   clearAuctions,
-  type CourierOfferRow,
 } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
@@ -18,6 +18,33 @@ const DEFER_SECONDS = 120;
 const DEFAULT_WAIT_MS = 60000;
 const GRACE_MS = 30000;
 const cityMap = require("../assets/images/city_map_photo.jpg");
+
+// ---------- helpers: strong id validation ----------
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUuid(v?: unknown): boolean {
+  return typeof v === "string" && UUID_RE.test(v.trim());
+}
+function isPositiveIntString(v?: unknown): boolean {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (!/^\d+$/.test(s)) return false;
+  return parseInt(s, 10) > 0;
+}
+function normalizeId(v: unknown): string | null {
+  if (!v && v !== 0) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s || s === "null" || s === "undefined" || s === "nan" || s === "0") {
+    return null;
+  }
+  return s;
+}
+function hasSolidAssignmentId(raw: any): string | null {
+  const aid = normalizeId(raw?.assignment_id ?? raw?.assignmentId);
+  if (!aid) return null;
+  if (isValidUuid(aid) || isPositiveIntString(aid)) return aid;
+  return null;
+}
 
 export default function MatchingAwaitDriver() {
   const router = useRouter();
@@ -88,43 +115,29 @@ export default function MatchingAwaitDriver() {
           );
           if (cancelled) return;
 
-          const st = raw?.status;
-          const reqId = String(raw?.request_id ?? raw?.requestId ?? "");
-          const asgId = String(raw?.assignment_id ?? raw?.assignmentId ?? "");
+          // Debug log once every poll (can comment out later)
+          console.log(
+            "[await-driver] poll status payload:",
+            JSON.stringify(raw)
+          );
 
-          if (st === "matched") {
-            if (reqId) setRequestId(reqId);
-            if (asgId) setAssignmentId(asgId);
+          const st = (raw?.status ?? "").toString().toLowerCase().trim();
+          const concreteAssignmentId = hasSolidAssignmentId(raw);
+
+          // Optional: also capture requestId, but we won't trust it alone
+          const reqIdNorm = normalizeId(raw?.request_id ?? raw?.requestId);
+          if (reqIdNorm) setRequestId(reqIdNorm);
+
+          // STRICT RULE:
+          // We ONLY flip to matched if status is "matched" AND we have a solid assignment id
+          if (st === "matched" && concreteAssignmentId) {
+            setAssignmentId(concreteAssignmentId);
             setStatus("matched");
             return;
           }
         } catch (e) {
           console.log(
             "[await-driver] checkOfferMatchStatus error:",
-            (e as any)?.message || e
-          );
-        }
-
-        try {
-          const assigned: CourierOfferRow[] = await listMyCourierOffers(
-            String(token),
-            {
-              status: "assigned",
-              limit: 50,
-            }
-          );
-          if (!cancelled && Array.isArray(assigned) && assigned.length > 0) {
-            const found = assigned.find(
-              (o) => String(o.id) === String(offerId)
-            );
-            if (found) {
-              setStatus("matched");
-              return;
-            }
-          }
-        } catch (e) {
-          console.log(
-            "[await-driver] listMyCourierOffers error:",
             (e as any)?.message || e
           );
         }
@@ -153,20 +166,22 @@ export default function MatchingAwaitDriver() {
   }
 
   function openAssignment() {
-    router.replace({
-      pathname: "/assignment_details",
-      params: {
-        role: "driver",
-        token: String(token ?? ""),
-        offerId: String(offerId),
-        requestId: String(requestId ?? ""),
-        assignmentId: String(assignmentId ?? ""),
-      },
-    });
+    // Navigate ONLY when we have a solid assignmentId
+    if (!assignmentId) return;
+    const params: Record<string, string> = {
+      role: "driver",
+      token: String(token ?? ""),
+      offerId: String(offerId),
+      assignmentId: assignmentId,
+    };
+    // requestId is optional (nice-to-have), but not required for navigation
+    if (requestId) params.requestId = requestId;
+
+    router.replace({ pathname: "/assignment_details", params });
   }
 
-  // תמיד מאפשרים ללחוץ כשסטטוס matched – המסך הבא ישלים נתונים גם בלי מזהים
-  const ctaDisabled = false;
+  // CTA enabled ONLY when we have a verified assignment id
+  const canOpen = status === "matched" && !!assignmentId;
 
   return (
     <WaitBackground
@@ -192,15 +207,15 @@ export default function MatchingAwaitDriver() {
           <>
             <Text style={S.bigEmoji}>🎉</Text>
             <Text style={S.title}>נמצאה משימה!</Text>
-            <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
+            <Text style={S.sub}>
+              {canOpen ? "אפשר להמשיך לפרטים." : "מעדכן מזהים מהשרת…"}
+            </Text>
             <TouchableOpacity
-              style={[S.cta, !requestId && !assignmentId && { opacity: 0.85 }]}
+              style={[S.cta, !canOpen && { opacity: 0.5 }]}
               onPress={openAssignment}
-              disabled={ctaDisabled}
+              disabled={!canOpen}
             >
-              <Text style={S.ctaText}>
-                {requestId || assignmentId ? "פתח/י את המשימה" : "מעדכן פרטים…"}
-              </Text>
+              <Text style={S.ctaText}>פתח/י את המשימה</Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>דף הבית</Text>

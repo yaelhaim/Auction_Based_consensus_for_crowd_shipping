@@ -1,8 +1,8 @@
 // app/assignment_details.tsx
-// Assignment details (sender/rider/driver) – full screen layout with diagonal hero wave.
-// UI: Hebrew. Comments: English.
+// Driver-safe matching (no fake matches): prefer server data by assignment_id.
+// Comments are in English; UI strings in Hebrew.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,31 +11,38 @@ import {
   TouchableOpacity,
   Image,
   Dimensions,
-  Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import * as Linking from "expo-linking";
 import Svg, { Path } from "react-native-svg";
+import { Ionicons } from "@expo/vector-icons";
 
 import {
   listSenderRequests,
   listRiderRequests,
-  listMyCourierOffers,
   checkOfferMatchStatus,
   getAssignmentByRequest,
-  BASE_URL,
+  getAssignmentById, // ← prefer fetching by assignment id when available
   type RequestRow,
   type RiderRequestRow,
-  type CourierOfferRow,
   type AssignmentDetailOut,
 } from "../lib/api";
 
-// --- Hero images ---
+// ---- Theme & layout constants ----
+const GREEN = "#9BAC70";
+const BROWN = "#CDB8A7"; // softer taupe-brown accent
+const BG = "#f7f7f5";
+const TXT = "#0b0b0b";
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+const WAVE_H = Math.max(360, Math.floor(SCREEN_H * 0.5));
+const HERO_H = 440;
+
+// Hero images (transparent PNGs)
 const pkgImg = require("../assets/images/package_image.png");
 const rideImg = require("../assets/images/green_car.png");
 
 type Role = "sender" | "rider" | "driver";
-
 type RequestLite = {
   id: string;
   type: "package" | "ride" | "passenger";
@@ -43,17 +50,20 @@ type RequestLite = {
   to_address?: string | null;
   window_start?: string | null;
   window_end?: string | null;
+  notes?: string | null;
 };
 
 export default function AssignmentDetails() {
   const router = useRouter();
-  const { role, token, requestId, offerId, home } = useLocalSearchParams<{
-    role: Role;
-    token: string;
-    requestId?: string;
-    offerId?: string;
-    home?: string;
-  }>();
+  const { role, token, requestId, offerId, home, assignmentId } =
+    useLocalSearchParams<{
+      role: Role;
+      token: string;
+      requestId?: string;
+      offerId?: string;
+      home?: string;
+      assignmentId?: string;
+    }>();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,18 +71,33 @@ export default function AssignmentDetails() {
   const [resolvedRequestId, setResolvedRequestId] = useState<string | null>(
     null
   );
+  const [assignmentIdLocal, setAssignmentIdLocal] = useState<string | null>(
+    null
+  ); // ✅ prefer this if present
+
   const [assignment, setAssignment] = useState<AssignmentDetailOut | null>(
     null
   );
   const [requestMeta, setRequestMeta] = useState<RequestLite | null>(null);
+  const [isDriverMatched, setIsDriverMatched] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
-  // ---------- Step 1: resolve requestId ----------
+  // Reset state when role/offer changes
+  useEffect(() => {
+    setResolvedRequestId(null);
+    setAssignmentIdLocal(null);
+    setAssignment(null);
+    setRequestMeta(null);
+    setIsDriverMatched(false);
+    setError(null);
+  }, [role, offerId, requestId]);
+
+  // -------- Resolve request/assignment id (role-safe) --------
   useEffect(() => {
     let cancelled = false;
 
-    async function resolveRequestId() {
+    async function resolveIds() {
       setLoading(true);
       setError(null);
 
@@ -116,39 +141,44 @@ export default function AssignmentDetails() {
             setResolvedRequestId(String(found.id));
           }
         } else {
-          // driver
-          if (requestId) {
-            setResolvedRequestId(String(requestId));
-          } else if (offerId) {
-            let reqId = "";
+          // DRIVER:
+          // If navigated with assignmentId (best), we are good.
+          if (assignmentId) {
+            setIsDriverMatched(true);
+            // requestId is optional; it will be confirmed from the server payload.
+            if (requestId) setResolvedRequestId(String(requestId));
+            setLoading(false);
+            return;
+          }
+
+          if (!offerId)
+            throw new Error("אין הצעה פתוחה להצגת התאמה (offerId חסר)");
+
+          // Ask backend for THIS offer only (backend should verify by offer_id/created_at)
+          let reqId = "";
+          let asgId = "";
+
+          const pollUntil = Date.now() + 9000;
+          while (Date.now() < pollUntil && !asgId) {
             try {
               const st = await checkOfferMatchStatus(
                 String(token),
                 String(offerId)
               );
-              if (st?.status === "matched" && (st.request_id || st.requestId)) {
-                reqId = String(st.request_id || st.requestId);
+              if (st?.status === "matched") {
+                asgId = String(st.assignment_id || "");
+                reqId = String(st.request_id || "");
+                break;
               }
             } catch {}
-            if (!reqId) {
-              const assigned: CourierOfferRow[] = await listMyCourierOffers(
-                String(token),
-                {
-                  status: "assigned",
-                  limit: 50,
-                }
-              );
-              const mine = assigned.find(
-                (o) => String(o.id) === String(offerId)
-              );
-              if ((mine as any)?.request_id)
-                reqId = String((mine as any).request_id);
-            }
-            if (!reqId) throw new Error("לא נמצאה התאמה להצעה זו עדיין");
-            setResolvedRequestId(reqId);
-          } else {
-            throw new Error("חסר מזהה הצעה או בקשה");
+            await new Promise((r) => setTimeout(r, 1000));
           }
+
+          if (!asgId && !reqId) throw new Error("עדיין אין התאמה להצעה הזו");
+
+          setIsDriverMatched(true);
+          if (asgId) setAssignmentIdLocal(asgId); // ✅ prefer fetching by assignment_id
+          if (reqId) setResolvedRequestId(reqId);
         }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "שגיאה בטעינת הנתונים");
@@ -157,17 +187,23 @@ export default function AssignmentDetails() {
       }
     }
 
-    resolveRequestId();
+    resolveIds();
     return () => {
       if (abortRef.current) abortRef.current.abort();
     };
-  }, [role, token, requestId, offerId]);
+  }, [role, token, requestId, offerId, assignmentId]);
 
-  // ---------- Step 2: fetch assignment + ensure we use the true request_id ----------
+  /* -------- Fetch assignment (prefer by assignment_id) -------- */
   useEffect(() => {
-    if (!resolvedRequestId) return;
+    // For driver we must have confirmed match first
+    if ((role as Role) === "driver" && !isDriverMatched) return;
 
-    const id: string = resolvedRequestId;
+    const hasAssignmentId =
+      (typeof assignmentId === "string" && assignmentId.length > 0) ||
+      (typeof assignmentIdLocal === "string" && assignmentIdLocal.length > 0);
+
+    if (!hasAssignmentId && !resolvedRequestId) return;
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -175,48 +211,37 @@ export default function AssignmentDetails() {
     const INTERVAL_MS = 1_000;
     const t0 = Date.now();
 
-    async function fetchAssignmentAndRequest() {
+    async function fetchIt() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getAssignmentByRequest(id);
+        let data: AssignmentDetailOut;
+
+        const asgId = (assignmentIdLocal || assignmentId) as string | undefined;
+        if (asgId) {
+          // ✅ Source of truth: fetch by assignment_id
+          data = await getAssignmentById(String(asgId));
+        } else {
+          // Fallback (sender/rider): fetch by request_id (only_active on server)
+          data = await getAssignmentByRequest(String(resolvedRequestId));
+        }
+
         if (cancelled) return;
 
-        // If server says different request_id (fresh match), resync:
-        if (data.request_id && data.request_id !== id) {
+        // Keep requestId in sync (server is canonical)
+        if (data.request_id && data.request_id !== resolvedRequestId) {
           setResolvedRequestId(data.request_id);
-          setLoading(false);
-          return;
         }
 
         setAssignment(data);
-
-        // Prefer request from the assignment payload
         const reqFromApi = (data as any).request as RequestLite | undefined;
-        if (reqFromApi && reqFromApi.id) {
-          setRequestMeta(reqFromApi);
-        } else {
-          try {
-            const res = await fetch(
-              `${BASE_URL}/requests/${encodeURIComponent(id)}`
-            );
-            if (res.ok) {
-              const r = (await res.json()) as RequestLite;
-              setRequestMeta(r);
-            } else {
-              setRequestMeta(null);
-            }
-          } catch {
-            setRequestMeta(null);
-          }
-        }
-
+        if (reqFromApi?.id) setRequestMeta(reqFromApi);
         setLoading(false);
       } catch (e: any) {
         const msg = e?.message || "";
         const is404 =
-          msg.includes("No assignment found") ||
-          msg.includes("HTTP 404") ||
+          msg.includes("No active assignment") ||
+          msg.includes("Assignment not found") ||
           msg.includes("404");
         if (!is404 || Date.now() - t0 > MAX_WAIT_MS) {
           if (!cancelled) {
@@ -225,19 +250,54 @@ export default function AssignmentDetails() {
           }
           return;
         }
-        timer = setTimeout(
-          () => !cancelled && fetchAssignmentAndRequest(),
-          INTERVAL_MS
-        );
+        timer = setTimeout(() => !cancelled && fetchIt(), INTERVAL_MS);
       }
     }
 
-    fetchAssignmentAndRequest();
+    fetchIt();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [resolvedRequestId]);
+  }, [
+    assignmentId,
+    assignmentIdLocal,
+    resolvedRequestId,
+    role,
+    isDriverMatched,
+  ]);
+
+  // -------- Refresh on focus (prefer by assignment_id) --------
+  useFocusEffect(
+    useCallback(() => {
+      const asgId = (assignmentIdLocal || assignmentId) as string | undefined;
+      const hasAssignmentId = !!asgId;
+      if (!hasAssignmentId && !resolvedRequestId) return;
+      if ((role as Role) === "driver" && !isDriverMatched) return;
+
+      (hasAssignmentId
+        ? getAssignmentById(String(asgId))
+        : getAssignmentByRequest(String(resolvedRequestId))
+      )
+        .then((data) => {
+          if (!data) return;
+          if (data.request_id && data.request_id !== resolvedRequestId) {
+            setResolvedRequestId(data.request_id);
+          } else {
+            setAssignment(data);
+            if ((data as any).request?.id)
+              setRequestMeta((data as any).request);
+          }
+        })
+        .catch(() => {});
+    }, [
+      assignmentId,
+      assignmentIdLocal,
+      resolvedRequestId,
+      role,
+      isDriverMatched,
+    ])
+  );
 
   function goHome() {
     router.replace({
@@ -246,7 +306,7 @@ export default function AssignmentDetails() {
     });
   }
 
-  // ---------- UI states ----------
+  // -------- UI states --------
   if (loading) {
     return (
       <View style={S.centerWrap}>
@@ -259,7 +319,7 @@ export default function AssignmentDetails() {
     return (
       <View style={S.centerWrap}>
         <Text style={S.err}>{error}</Text>
-        <TouchableOpacity onPress={goHome} style={S.btn}>
+        <TouchableOpacity onPress={goHome} style={[S.btn, S.btnBrown]}>
           <Text style={S.btnText}>חזרה</Text>
         </TouchableOpacity>
       </View>
@@ -267,42 +327,48 @@ export default function AssignmentDetails() {
   }
   if (!assignment) return null;
 
-  // ---------- Derived display data ----------
   const d = assignment.driver;
-  const req = requestMeta || (assignment as any).request;
-  const t = ((req?.type as string) || "").toLowerCase();
-  const isPackage = t === "package";
-  const isPassenger = t === "ride" || t === "passenger";
+  const req = (assignment as any).request as RequestLite | undefined;
 
-  const kind = isPackage ? "איסוף חבילה" : "טרמפ";
-  const heroImage = isPackage ? pkgImg : rideImg;
+  // Treat both "ride" and legacy "passenger" as ride
+  const t = ((req?.type as string) || "").toLowerCase();
+  const isRide = t === "ride" || t === "passenger";
+  const kind = isRide
+    ? "יש לך טרמפ לעשות, איזה כיף!"
+    : "יש לך חבילה לאסוף, איזה כיף!";
+  const heroImage = isRide ? rideImg : pkgImg;
 
   const callEnabled = !!d.phone;
   const onCall = () => d.phone && Linking.openURL(`tel:${d.phone}`);
 
   const assignedLocal = new Date(assignment.assigned_at).toLocaleString();
-
   const ratingNumber = typeof d.rating === "number" ? d.rating : null;
-  const ratingLabel = ratingNumber == null ? "חדש" : ratingNumber.toFixed(1);
+  const ratingLabel =
+    ratingNumber == null
+      ? "חדש/ה"
+      : d.rating != null
+        ? d.rating.toFixed(1)
+        : "חדש/ה";
+
+  // Lower hero image more for the car
+  const heroOffset = isRide ? 56 : 16;
 
   return (
     <View style={S.page}>
-      {/* Diagonal green wave (covers ~55% height) */}
-      <GreenDiagonalWave />
-
-      {/* Hero image – large & present */}
-      <View style={S.heroWrap}>
-        <Image source={heroImage} style={S.heroImg} resizeMode="contain" />
+      {/* fixed top layer */}
+      <View style={S.header}>
+        <GreenDiagonalWave />
+        <View style={[S.heroWrap, { transform: [{ translateY: heroOffset }] }]}>
+          <Image source={heroImage} style={S.heroImg} resizeMode="contain" />
+        </View>
       </View>
 
-      {/* Bottom details */}
+      {/* single-screen content – no scroll */}
       <View style={S.details}>
         <Text style={S.kind}>{kind}</Text>
 
-        <View style={S.tagsRow}>
-          {req?.from_address ? <Tag text={req.from_address!} /> : null}
-          {req?.to_address ? <Tag text={req.to_address!} /> : null}
-        </View>
+        {/* Route pill – LTR: FROM (left) → arrow-forward → TO (right) */}
+        <RoutePillLTR from={req?.from_address} to={req?.to_address} />
 
         <View style={S.driverRow}>
           <Image
@@ -320,20 +386,34 @@ export default function AssignmentDetails() {
           <TouchableOpacity
             onPress={onCall}
             disabled={!callEnabled}
-            style={[S.callBtn, !callEnabled && { opacity: 0.5 }]}
+            style={[
+              S.iconBtn,
+              S.iconBtnBrown,
+              !callEnabled && { opacity: 0.4 },
+            ]}
           >
-            <Text style={S.callBtnText}>
-              {callEnabled ? "התקשר" : "אין טלפון"}
-            </Text>
+            <Ionicons name="call" size={20} color="#fff" />
           </TouchableOpacity>
         </View>
+
+        {!!req?.notes && (
+          <View style={S.notesBox}>
+            <Text style={S.notesTitle}>הערות</Text>
+            <Text style={S.notesBody} numberOfLines={3}>
+              {req?.notes}
+            </Text>
+          </View>
+        )}
 
         <View style={S.infoRow}>
           <InfoItem label="סטטוס" value={prettyStatus(assignment.status)} />
           <InfoItem label="שעת שיוך" value={assignedLocal} />
         </View>
 
-        <TouchableOpacity onPress={goHome} style={[S.btn, { marginTop: 20 }]}>
+        <TouchableOpacity
+          onPress={goHome}
+          style={[S.btn, S.btnBrown, { marginTop: 10 }]}
+        >
           <Text style={S.btnText}>חזרה</Text>
         </TouchableOpacity>
       </View>
@@ -341,20 +421,10 @@ export default function AssignmentDetails() {
   );
 }
 
-/* ---------------- UI helpers ---------------- */
+/* ---------------- helpers & small components ---------------- */
 
 function prettyStatus(s: string) {
   return s.replaceAll("_", " ");
-}
-
-function Tag({ text }: { text: string }) {
-  return (
-    <View style={S.tag}>
-      <Text style={S.tagText} numberOfLines={1}>
-        {text}
-      </Text>
-    </View>
-  );
 }
 
 function RatingStars({
@@ -364,14 +434,11 @@ function RatingStars({
   rating: number | null;
   label: string;
 }) {
-  if (rating == null) {
-    return <Text style={S.dimSmall}>{label}</Text>; // "חדש"
-  }
+  if (rating == null) return <Text style={S.dimSmall}>{label}</Text>;
   const clamped = Math.max(0, Math.min(5, rating));
   const full = Math.floor(clamped);
   const hasHalf = clamped - full >= 0.5;
   const stars = "★★★★★".split("");
-
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
       <Text style={S.stars}>
@@ -399,28 +466,51 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* -------- Diagonal wave SVG (covers ~55% of screen height) -------- */
-function GreenDiagonalWave() {
-  const { width, height: screenH } = Dimensions.get("window");
-  const h = Math.max(300, Math.floor(screenH * 0.55));
+/* ---- Route pill (LTR): FROM left → arrow-forward → TO right; no dots ---- */
+function RoutePillLTR({
+  from,
+  to,
+}: {
+  from?: string | null;
+  to?: string | null;
+}) {
+  if (!from && !to) return null;
+  return (
+    <View style={S.routePill}>
+      <View style={[S.routeRow, { flexDirection: "row" }]}>
+        <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
+          {from || "—"}
+        </Text>
+        <Ionicons
+          name="arrow-forward"
+          size={18}
+          color="#6b7280"
+          style={{ marginHorizontal: 10 }}
+        />
+        <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
+          {to || "—"}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
-  // Diagonal wave from top-left to ~mid-bottom with a soft curve
-  // Points:
-  // (0,0) → (width,0) → (width, h*0.35) → curve back to (0, h*0.9) → close
+/* -------- Curved diagonal wave (fixed at top) -------- */
+function GreenDiagonalWave() {
+  const h = WAVE_H;
   const d = `
     M 0 0
-    H ${width}
-    V ${h * 0.35}
-    C ${width * 0.7} ${h * 0.55}, ${width * 0.35} ${h * 0.75}, 0 ${h * 0.9}
+    H ${SCREEN_W}
+    V ${h * 0.36}
+    C ${SCREEN_W * 0.78} ${h * 0.62}, ${SCREEN_W * 0.35} ${h * 0.8}, 0 ${h * 0.92}
     Z
   `;
-
   return (
     <Svg
-      width={width}
+      width={SCREEN_W}
       height={h}
       style={S.waveSvg}
-      viewBox={`0 0 ${width} ${h}`}
+      viewBox={`0 0 ${SCREEN_W} ${h}`}
     >
       <Path d={d} fill={GREEN} />
     </Svg>
@@ -429,15 +519,40 @@ function GreenDiagonalWave() {
 
 /* ---------------- Styles ---------------- */
 
-const GREEN = "#9bac70";
-const BG = "#f7f7f5";
-const TXT = "#0b0b0b";
-
 const S = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: BG,
+  page: { flex: 1, backgroundColor: BG },
+
+  header: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: WAVE_H,
   },
+  waveSvg: { position: "absolute", top: 0, left: 0 },
+
+  heroWrap: {
+    position: "absolute",
+    bottom: 0,
+    left: 16,
+    right: 16,
+    height: HERO_H,
+    borderRadius: 28,
+    overflow: "hidden",
+    backgroundColor: "transparent",
+    justifyContent: "flex-end",
+  },
+  heroImg: { width: "100%", height: HERO_H, backgroundColor: "transparent" },
+
+  details: {
+    marginTop: WAVE_H - 12,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 12,
+    flex: 1,
+    justifyContent: "flex-start",
+  },
+
   centerWrap: {
     flex: 1,
     alignItems: "center",
@@ -447,66 +562,29 @@ const S = StyleSheet.create({
   sub: { fontSize: 14, opacity: 0.7 },
   err: { color: "#b91c1c", fontWeight: "700" },
 
-  waveSvg: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-  },
+  kind: { fontSize: 22, fontWeight: "800", color: TXT },
 
-  heroWrap: {
-    // push down so image sits nicely on the diagonal wave
-    marginTop: Platform.select({ ios: 120, android: 100 }),
-    marginHorizontal: 16,
-    borderRadius: 28,
-    overflow: "hidden",
-    // soften shadows on iOS; elevation on Android
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-    backgroundColor: "transparent", // avoid any black box behind PNGs
-  },
-  heroImg: {
-    width: "100%",
-    height: 280, // bigger & more present
-    backgroundColor: "transparent", // avoid dark fill under alpha
-  },
-
-  details: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 22,
-    gap: 12,
-  },
-
-  kind: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: TXT,
-  },
-
-  tagsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 4,
-  },
-  tag: {
-    backgroundColor: "#eef2e6",
+  routePill: {
+    alignSelf: "center",
+    width: "84%",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    maxWidth: "100%",
+    paddingVertical: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
-  tagText: { color: TXT },
+  routeRow: { alignItems: "center", justifyContent: "space-between" },
+  routeText: { color: TXT, fontWeight: "700", maxWidth: "44%" },
 
   driverRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginTop: 12,
+    marginTop: 8,
   },
   avatar: {
     width: 56,
@@ -514,38 +592,44 @@ const S = StyleSheet.create({
     borderRadius: 28,
     backgroundColor: "#e5e7eb",
   },
-  name: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: TXT,
-  },
+  name: { fontSize: 18, fontWeight: "700", color: TXT },
   dimSmall: { color: "#6b7280", fontSize: 12 },
   stars: { color: "#f59e0b", fontSize: 16 },
+
+  notesBox: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  notesTitle: { fontWeight: "800", marginBottom: 6, color: TXT },
+  notesBody: { color: "#374151", lineHeight: 20 },
 
   infoRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 16,
-    marginTop: 6,
+    marginTop: 2,
   },
   infoLabel: { color: "#6b7280", fontSize: 12 },
   infoValue: { color: TXT, fontWeight: "600" },
 
   btn: {
-    backgroundColor: GREEN,
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 12,
     alignSelf: "center",
-    marginTop: 8,
   },
   btnText: { color: "#fff", fontWeight: "800" },
+  btnBrown: { backgroundColor: BROWN },
 
-  callBtn: {
-    backgroundColor: GREEN,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  callBtnText: { color: "#fff", fontWeight: "800" },
+  iconBtnBrown: { backgroundColor: BROWN },
 });

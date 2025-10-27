@@ -14,7 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     Enum as SAEnum,
-    ARRAY,  # for text[] columns
+    ARRAY,
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -51,7 +51,7 @@ class Users(Base):
     city            = Column(Text)
 
     # Expo push (single-token model)
-    expo_push_token       = Column(Text)                           # e.g. "ExponentPushToken[xxxx]"
+    expo_push_token       = Column(Text)
     push_token_updated_at = Column(DateTime(timezone=True))
 
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
@@ -206,7 +206,7 @@ class CourierOffers(Base):
     window_end     = Column(DateTime(timezone=True), nullable=False)
 
     min_price      = Column(Numeric(10, 2), nullable=False)
-    types          = Column(ARRAY(String), nullable=False)  # e.g. ['package'] or ['package','passenger']
+    types          = Column(ARRAY(String), nullable=False)  # ['package'] or ['package','passenger']
 
     notes          = Column(Text)
     status         = Column(String, nullable=False, default="active")  # 'active' / 'assigned' / 'cancelled'
@@ -236,14 +236,14 @@ class CourierOffers(Base):
 class Assignments(Base):
     __tablename__ = "assignments"
     __table_args__ = (
-        UniqueConstraint("request_id", name="uq_assignments_request"),  # one active assignment per request
+        UniqueConstraint("request_id", name="uq_assignments_request"),
     )
 
     id             = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id     = Column(PG_UUID(as_uuid=True), ForeignKey("requests.id"), nullable=False)
     driver_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    offer_id       = Column(PG_UUID(as_uuid=True), ForeignKey("courier_offers.id"), nullable=True)  # link to offer
 
-    # assigned_at MUST NOT be NULL (DB had NOT NULL). Provide server_default.
     assigned_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     status         = Column(assignment_status_enum, nullable=False)
 
@@ -270,6 +270,7 @@ class Assignments(Base):
         back_populates="driver_assignments",
         foreign_keys=[driver_user_id],
     )
+    # ✅ the three relationships that were missing and caused mapper errors:
     escrow = relationship(
         "Escrows",
         uselist=False,

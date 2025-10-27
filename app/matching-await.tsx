@@ -1,6 +1,8 @@
 // app/matching-await.tsx
 // Waiting screen (sender/rider) with city-map background + white card + hourglass.
-// Defers pushes, kicks the clearing (IDA*), polls for a match, and routes to the details screen when matched.
+// Server-first matching: try to create a REAL assignment once, then poll as fallback.
+// We only show "matched" and enable CTA if we have a solid assignment_id.
+// Comments are in English; user-facing strings are in Hebrew.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
@@ -9,6 +11,7 @@ import {
   deferPushForRequest,
   checkMatchStatus,
   clearAuctions,
+  runMatchingForRequest, // NEW: server-side create attempt
 } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
@@ -18,6 +21,33 @@ const DEFER_SECONDS = 120;
 const DEFAULT_WAIT_MS = 60000;
 const GRACE_MS = 30000;
 const cityMap = require("../assets/images/city_map_photo.jpg");
+
+// ---- strong id validation (UUID or positive integer) ----
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidUuid(v?: unknown): boolean {
+  return typeof v === "string" && UUID_RE.test(v.trim());
+}
+function isPositiveIntString(v?: unknown): boolean {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (!/^\d+$/.test(s)) return false;
+  return parseInt(s, 10) > 0;
+}
+function normalizeId(v: unknown): string | null {
+  if (!v && v !== 0) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s || s === "null" || s === "undefined" || s === "nan" || s === "0") {
+    return null;
+  }
+  return s;
+}
+function solidAssignmentId(raw: any): string | null {
+  const aid = normalizeId(raw?.assignment_id ?? raw?.assignmentId);
+  if (!aid) return null;
+  return isValidUuid(aid) || isPositiveIntString(aid) ? aid : null;
+}
 
 export default function MatchingAwait() {
   const router = useRouter();
@@ -50,12 +80,12 @@ export default function MatchingAwait() {
     if (!requestId || !token) return;
 
     async function start() {
-      // Set a soft deadline for polling
+      // Soft deadline for polling
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
 
-      // Defer push notifications for this specific request
+      // Defer push notifications for this request (optional nicety)
       try {
         const resp = await deferPushForRequest(
           String(token),
@@ -74,7 +104,7 @@ export default function MatchingAwait() {
         );
       }
 
-      // Fire a non-blocking clearing tick (IDA*)
+      // Trigger a clearing tick (IDA*) in the background
       clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
         .then((r: any) =>
           console.log(
@@ -88,15 +118,41 @@ export default function MatchingAwait() {
           console.log("[await] clearAuctions error:", e?.message || e)
         );
 
-      // Start polling for a match
+      // NEW: try to create a REAL assignment immediately (one-shot)
+      try {
+        const first = await runMatchingForRequest(
+          String(token),
+          String(requestId)
+        );
+        if (cancelled) return;
+        if (first.status === "matched" && solidAssignmentId(first)) {
+          setAssignmentId(solidAssignmentId(first));
+          setStatus("matched");
+          return; // no need to start the poll loop
+        }
+      } catch (e) {
+        console.log(
+          "[await] runMatchingForRequest error:",
+          (e as any)?.message || e
+        );
+      }
+
+      // Fallback: start polling match_status
       async function poll() {
         try {
           const res = await checkMatchStatus(String(token), String(requestId));
           if (cancelled) return;
-          if (res?.status === "matched" && res.assignment_id) {
-            setAssignmentId(String(res.assignment_id));
-            setStatus("matched");
-            return;
+
+          // Log for debugging (can be muted later)
+          console.log("[await] poll payload:", JSON.stringify(res));
+
+          if (res?.status === "matched") {
+            const aid = solidAssignmentId(res);
+            if (aid) {
+              setAssignmentId(aid);
+              setStatus("matched");
+              return;
+            }
           }
         } catch (e) {
           console.log(
@@ -135,20 +191,22 @@ export default function MatchingAwait() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
 
-  // Navigate to the assignment details screen we created (app/assignment_details.tsx)
+  // Navigate to the assignment details screen. Require solid assignmentId.
   function openAssignment() {
+    if (!assignmentId) return;
     router.replace({
       pathname: "/assignment_details",
       params: {
         requestId: String(requestId),
         token: String(token ?? ""),
         role: String(role ?? ""),
-        assignmentId: String(assignmentId ?? ""),
+        assignmentId: String(assignmentId),
       },
     });
   }
 
-  const ctaDisabled = !requestId; // practically always true-but-safe guard
+  // CTA enabled only when we truly have a verified assignment id
+  const ctaDisabled = !assignmentId;
 
   return (
     <WaitBackground
@@ -174,11 +232,13 @@ export default function MatchingAwait() {
           <>
             <Text style={S.bigEmoji}>🎉</Text>
             <Text style={S.title}>נמצאה התאמה!</Text>
-            <Text style={S.sub}>אפשר להמשיך לפרטים.</Text>
+            <Text style={S.sub}>
+              {assignmentId ? "אפשר להמשיך לפרטים." : "מעדכן מזהים מהשרת…"}
+            </Text>
             <TouchableOpacity
-              style={[S.cta, ctaDisabled && { opacity: 0.6 }]}
+              style={[S.cta, !assignmentId && { opacity: 0.6 }]}
               onPress={openAssignment}
-              disabled={ctaDisabled}
+              disabled={!assignmentId}
             >
               <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
             </TouchableOpacity>
