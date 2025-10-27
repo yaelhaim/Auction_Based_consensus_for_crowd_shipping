@@ -16,9 +16,33 @@ export default function Layout() {
     <Stack screenOptions={{ headerTitleAlign: "center" }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="home" options={{ headerShown: false }} />
-      <Stack.Screen name="wallet-login" options={{ title: "wallet-login" }} />
-      <Stack.Screen name="profile-setup" options={{ title: "פרטים אישיים" }} />
-      <Stack.Screen name="role_select" options={{ title: "בחירת תפקיד" }} />
+      <Stack.Screen name="wallet-login" options={{ headerShown: false }} />
+      <Stack.Screen name="profile-setup" options={{ headerShown: false }} />
+      <Stack.Screen name="role_select" options={{ headerShown: false }} />
+      <Stack.Screen name="sender_home_page" options={{ headerShown: false }} />
+      <Stack.Screen name="rider_home_page" options={{ headerShown: false }} />
+      <Stack.Screen name="courier_home_page" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="sender_request_create"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="rider_request_create"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="courier_request_create"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="matching-await-driver"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen name="matching-await" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="assignment_details"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

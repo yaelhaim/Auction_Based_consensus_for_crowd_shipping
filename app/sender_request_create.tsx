@@ -424,7 +424,7 @@ const S = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E7D8CF",
+    borderColor: "#C19A6B",
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 10,

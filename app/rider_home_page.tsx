@@ -1,340 +1,304 @@
 // app/rider_home_page.tsx
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+// Rider Home — gradient, two-line headline, RTL, mocha translucent cards.
+// Hides Expo Router header.
+
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  ScrollView,
   RefreshControl,
   TouchableOpacity,
-  Alert,
-  Dimensions,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { getMyProfile, getRiderMetrics, type RiderMetrics } from "../lib/api";
 
-import {
-  getMyProfile,
-  getRiderMetrics,
-  listRiderRequests,
-  type RiderMetrics,
-  type RiderRequestRow,
-  type RiderBucket,
-} from "../lib/api";
-import { ListCard, ActionBanner } from "./components/Primitives";
-import { COLORS } from "./ui/theme";
-
-const H = Dimensions.get("window").height;
+const GREEN_1 = "#DDECCB";
+const GREEN_2 = "#CBE1B4";
+const GREEN_3 = "#BFD8A0";
+const GREEN_4 = "#9BAC70";
+const CARD_BG = "rgba(181,133,94,0.22)";
+const CARD_BORDER = "rgba(181,133,94,0.35)";
+const TXT = "#0b0b0b";
 
 export default function RiderHome() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
+
   const [firstName, setFirstName] = useState("");
-  const [tab, setTab] = useState<RiderBucket>("open");
-  const [items, setItems] = useState<RiderRequestRow[]>([]);
   const [metrics, setMetrics] = useState<RiderMetrics | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadAll = useCallback(
-    async (bucket: RiderBucket) => {
-      if (!token) return;
-      setLoading(true);
-      try {
-        const [m, list] = await Promise.all([
-          getRiderMetrics(String(token)),
-          listRiderRequests(String(token), bucket),
-        ]);
-        setMetrics(m);
-        setItems(list);
-      } catch (e: any) {
-        Alert.alert("שגיאה", e?.message || "טעינת הדף נכשלה");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [token]
-  );
-
-  useEffect(() => {
-    (async () => {
-      if (!token) return;
-      const me = await getMyProfile(String(token));
-      setFirstName(me?.first_name || "");
-    })();
+  const load = useCallback(async () => {
+    if (!token) return;
+    const [me, m] = await Promise.all([
+      getMyProfile(String(token)).catch(() => null),
+      getRiderMetrics(String(token)).catch(() => null),
+    ]);
+    setFirstName(me?.first_name || "");
+    setMetrics(m ?? null);
   }, [token]);
 
   useEffect(() => {
-    loadAll(tab);
-  }, [tab, loadAll]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadAll(tab);
-    }, [loadAll, tab])
-  );
+    load();
+  }, [load]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadAll(tab);
+    await load();
     setRefreshing(false);
-  }, [tab, loadAll]);
+  }, [load]);
 
-  const tabTitle = useMemo(
-    () => (tab === "open" ? "פתוחות" : tab === "active" ? "פעילות" : "הושלמו"),
-    [tab]
-  );
-
-  function openNewRide() {
-    if (!token) {
-      Alert.alert("שגיאה", "חסרים פרטי התחברות (token)");
-      return;
-    }
+  const goOpen = () =>
+    router.push({
+      pathname: "/bucket_list",
+      params: { token: String(token), role: "rider", bucket: "open" },
+    });
+  const goActive = () =>
+    router.push({
+      pathname: "/bucket_list",
+      params: { token: String(token), role: "rider", bucket: "active" },
+    });
+  const goDone = () =>
+    router.push({
+      pathname: "/bucket_list",
+      params: { token: String(token), role: "rider", bucket: "completed" },
+    });
+  const newRide = () =>
     router.push({ pathname: "/rider_request_create", params: { token } });
-  }
-
-  const Header = (
-    <>
-      {/* חום מלא-רוחב עם פינות תחתונות מעוגלות, ו-KPI לבנים בתחתית */}
-      <View style={[S.topPanel, { minHeight: H * 0.46 }]}>
-        <View style={S.avatarWrap}>
-          <View style={S.avatarCircle}>
-            <Ionicons name="person" size={30} color={COLORS.text} />
-          </View>
-        </View>
-
-        <Text style={S.hello}>
-          היי{firstName ? `, ${firstName}` : ""}{" "}
-          <Text style={{ fontWeight: "700", color: COLORS.primaryDark }}></Text>
-        </Text>
-
-        {/* KPI Pills */}
-        <View style={S.kpiBarPinned}>
-          <View style={S.kpiPill}>
-            <Text style={S.kpiPillVal}>{metrics?.open_count ?? 0}</Text>
-            <Text style={S.kpiPillLabel}>פתוחות</Text>
-          </View>
-          <View style={S.kpiPill}>
-            <Text style={S.kpiPillVal}>{metrics?.active_count ?? 0}</Text>
-            <Text style={S.kpiPillLabel}>בפעילות</Text>
-          </View>
-          <View style={S.kpiPill}>
-            <Text style={S.kpiPillVal}>{metrics?.completed_count ?? 0}</Text>
-            <Text style={S.kpiPillLabel}>הושלמו</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* אריחי פעולה במקום טאב-בר הכחול */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-        <ActionBanner
-          title="צפייה בבקשות פתוחות"
-          subtitle="בקשות שמחכות לשיבוץ נהג"
-          active={tab === "open"}
-          onPress={() => setTab("open")}
-        />
-        <ActionBanner
-          title="צפייה בבקשות פעילות"
-          subtitle="בקשות שובצו/בדרך"
-          active={tab === "active"}
-          onPress={() => setTab("active")}
-        />
-        <ActionBanner
-          title="צפייה בבקשות שהושלמו"
-          subtitle="היסטוריית טרמפים"
-          active={tab === "completed"}
-          onPress={() => setTab("completed")}
-        />
-
-        <Text style={S.sectionTitle}>רשימת {tabTitle}</Text>
-      </View>
-    </>
-  );
 
   return (
-    <View style={S.screen}>
-      <FlatList
-        data={items}
-        keyExtractor={(it) => it.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        contentContainerStyle={{ paddingBottom: 72 }}
-        ListHeaderComponent={Header}
-        renderItem={({ item }) => (
-          <View style={{ paddingHorizontal: 16 }}>
-            <ListCard
-              title={`${item.from_address} → ${item.to_address}`}
-              subtitle={`${fmtWindow(
-                item.window_start,
-                item.window_end
-              )} • ${statusLabel(item.status)} • טרמפ`}
-              tone="primary"
+    <View style={{ flex: 1 }}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <LinearGradient
+        colors={[GREEN_1, GREEN_2, GREEN_3, GREEN_4]}
+        start={{ x: 1, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={S.gradient}
+      >
+        <ScrollView
+          contentContainerStyle={S.scroll}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
+          <View style={S.userBar}>
+            <Text style={S.userName} numberOfLines={1}>
+              {firstName ? `היי, ${firstName}` : "היי!"}
+            </Text>
+          </View>
+
+          <View style={S.titleWrap}>
+            <Text style={S.titleLine1}>הדרך שלך ליעד</Text>
+            <Text style={S.titleLine2}>
+              מתחילה כאן<Text style={S.spark}>✨</Text>
+            </Text>
+          </View>
+
+          <View style={S.cardsRow}>
+            <StatusCard
+              title="הושלמו"
+              subtitle="נסיעות שהסתיימו"
+              count={metrics?.completed_count ?? 0}
+              onPress={goDone}
+              icon="checkmark-circle"
+            />
+            <StatusCard
+              title="בטיפול"
+              subtitle="נסיעות בתהליך"
+              count={metrics?.active_count ?? 0}
+              onPress={goActive}
+              icon="time"
+            />
+            <StatusCard
+              title="פתוחות"
+              subtitle="בקשות טרמפ פתוחות"
+              count={metrics?.open_count ?? 0}
+              onPress={goOpen}
+              icon="folder-open"
             />
           </View>
-        )}
-        ListEmptyComponent={
-          <Text style={S.empty}>
-            {loading ? "טוען…" : `אין פריטים בקטגוריה "${tabTitle}"`}
-          </Text>
-        }
-      />
 
-      {/* כפתור מלא-רוחב דבוק לתחתית */}
-      <TouchableOpacity
-        style={S.fullWidthBarBtn}
-        onPress={openNewRide}
-        activeOpacity={0.9}
-      >
-        <Text style={S.fullWidthBarBtnTxt}>הוספת בקשת טרמפ</Text>
-      </TouchableOpacity>
+          <View style={S.linksCol}>
+            <LinkBtn
+              label="כל הבקשות הפתוחות"
+              onPress={goOpen}
+              icon="folder-open"
+            />
+            <LinkBtn label="כל הבקשות שבטיפול" onPress={goActive} icon="time" />
+            <LinkBtn
+              label="בקשות שטופלו ונסגרו"
+              onPress={goDone}
+              icon="checkmark-done"
+            />
+          </View>
+        </ScrollView>
+
+        <TouchableOpacity
+          style={S.ctaBar}
+          onPress={newRide}
+          activeOpacity={0.9}
+        >
+          <Text style={S.ctaText}>הוספת בקשת טרמפ</Text>
+          <Ionicons
+            name="chevron-back"
+            size={18}
+            color="#fff"
+            style={{ transform: [{ rotate: "180deg" }] }}
+          />
+        </TouchableOpacity>
+      </LinearGradient>
     </View>
   );
 }
 
-function statusLabel(s: RiderRequestRow["status"]) {
-  return s === "open"
-    ? "פתוחה"
-    : s === "assigned"
-      ? "שובץ נהג"
-      : s === "in_transit"
-        ? "בדרך"
-        : s === "completed"
-          ? "הושלם"
-          : "בוטל";
+function StatusCard({
+  title,
+  subtitle,
+  count,
+  onPress,
+  icon,
+}: {
+  title: string;
+  subtitle: string;
+  count: number;
+  onPress: () => void;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <TouchableOpacity style={S.card} onPress={onPress} activeOpacity={0.85}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Ionicons name={icon} size={18} color={TXT} />
+        <Text style={S.cardTitle}>{title}</Text>
+      </View>
+      <Text style={S.cardSub} numberOfLines={2}>
+        {subtitle}
+      </Text>
+      <Text style={S.cardCount}>{count}</Text>
+    </TouchableOpacity>
+  );
 }
-function fmtDate(iso?: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, "0")}.${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}.${d.getFullYear()}`;
-}
-function fmtTime(iso?: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes()
-  ).padStart(2, "0")}`;
-}
-function fmtWindow(s?: string | null, e?: string | null) {
-  if (s && e) {
-    const same = fmtDate(s) === fmtDate(e);
-    return same
-      ? `חלון: ${fmtDate(s)} ${fmtTime(s)}–${fmtTime(e)}`
-      : `חלון: ${fmtDate(s)} ${fmtTime(s)} → ${fmtDate(e)} ${fmtTime(e)}`;
-  }
-  if (s) return `זמין מ: ${fmtDate(s)} ${fmtTime(s)}`;
-  if (e) return `עד: ${fmtDate(e)} ${fmtTime(e)}`;
-  return "ללא חלון זמן";
+
+function LinkBtn({
+  label,
+  onPress,
+  icon,
+}: {
+  label: string;
+  onPress: () => void;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <TouchableOpacity style={S.linkBtn} onPress={onPress} activeOpacity={0.85}>
+      <Ionicons name={icon} size={16} color={TXT} />
+      <Text style={S.linkLabel}>{label}</Text>
+      <Ionicons
+        name="chevron-back"
+        size={16}
+        color={TXT}
+        style={{ transform: [{ rotate: "180deg" }] }}
+      />
+    </TouchableOpacity>
+  );
 }
 
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg },
-
-  // FULL-WIDTH mocha section (scrolls with content) with rounded bottom corners
-  topPanel: {
-    backgroundColor: COLORS.softMocha,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    marginTop: 0,
-    marginHorizontal: 0,
-    paddingTop: 32,
-    paddingBottom: 78, // room for KPI pills
+  gradient: {
+    flex: 1,
+    paddingTop: 24,
     paddingHorizontal: 16,
-    position: "relative",
-    alignItems: "center",
+    paddingBottom: 24,
   },
+  scroll: { paddingBottom: 96 },
 
-  // Avatar
-  avatarWrap: {
-    width: "100%",
-    alignItems: "center",
+  userBar: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingTop: 12,
+  },
+  userName: { color: TXT, fontSize: 16, fontWeight: "800", textAlign: "right" },
+
+  titleWrap: {
     marginTop: 10,
-    marginBottom: 8,
+    alignItems: "flex-start",
+    paddingHorizontal: 4,
+    marginBottom: 14,
   },
-  avatarCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-
-  hello: {
-    marginTop: 8,
-    fontSize: 20,
+  titleLine1: {
+    fontSize: 30,
     fontWeight: "900",
-    color: COLORS.text,
-    textAlign: "center",
-    writingDirection: "ltr",
+    color: TXT,
+    textAlign: "left",
   },
+  titleLine2: {
+    fontSize: 26,
+    fontWeight: "600",
+    fontStyle: "italic",
+    color: "#1a1a1a",
+    textAlign: "left",
+    marginTop: -4,
+  },
+  spark: { fontStyle: "normal" },
 
-  // White KPI pills (slightly raised from bottom)
-  kpiBarPinned: {
+  cardsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  card: {
+    width: "48%",
+    backgroundColor: CARD_BG,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: CARD_BORDER,
+  },
+  cardTitle: { color: TXT, fontSize: 14, fontWeight: "800" },
+  cardSub: {
+    color: TXT,
+    opacity: 0.85,
+    fontSize: 12,
+    marginTop: 6,
+    minHeight: 32,
+  },
+  cardCount: { color: TXT, fontSize: 28, fontWeight: "900", marginTop: 6 },
+
+  linksCol: { marginTop: 16, gap: 10 },
+  linkBtn: {
+    backgroundColor: CARD_BG,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: CARD_BORDER,
+  },
+  linkLabel: { color: TXT, fontSize: 14, fontWeight: "700" },
+
+  ctaBar: {
     position: "absolute",
     left: 16,
     right: 16,
-    bottom: 30,
+    bottom: 18,
+    height: 54,
+    backgroundColor: "#C19A6B",
+    borderRadius: 28,
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  kpiPill: {
-    width: 92,
-    paddingVertical: 9,
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-  },
-  kpiPillVal: { fontWeight: "900", fontSize: 17, textAlign: "center" },
-  kpiPillLabel: {
-    color: COLORS.dim,
-    fontSize: 12,
-    marginTop: 3,
-    textAlign: "center",
-  },
-
-  sectionTitle: {
-    marginTop: 16,
-    marginBottom: 8,
-    fontWeight: "900",
-    color: COLORS.primaryDark,
-    textAlign: "left",
-  },
-
-  empty: {
-    textAlign: "center",
-    color: COLORS.dim,
-    marginTop: 18,
-    paddingHorizontal: 16,
-  },
-
-  // Full-width sticky bottom button (edge-to-edge, no radius)
-  fullWidthBarBtn: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 56,
-    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
-  fullWidthBarBtnTxt: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  ctaText: { color: "#fff", fontSize: 16, fontWeight: "900" },
 });
