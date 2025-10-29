@@ -79,6 +79,10 @@ sp-timestamp.default-features = true
 sp-timestamp.workspace = true
 substrate-frame-rpc-system.default-features = true
 substrate-frame-rpc-system.workspace = true
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
 
 [build-dependencies]
 substrate-build-script-utils.default-features = true

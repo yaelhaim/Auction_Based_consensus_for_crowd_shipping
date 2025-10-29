@@ -11,6 +11,9 @@ use solochain_template_runtime::{self, apis::RuntimeApi, opaque::Block};
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use std::{sync::Arc, time::Duration};
 
+// ---- NEW: bring our PoBA worker module ----
+mod poba_worker;
+
 pub(crate) type FullClient = sc_service::TFullClient<
 	Block,
 	RuntimeApi,
@@ -130,7 +133,7 @@ pub fn new_partial(config: &Configuration) -> Result<Service, ServiceError> {
 pub fn new_full<
 	N: sc_network::NetworkBackend<Block, <Block as sp_runtime::traits::Block>::Hash>,
 >(
-	config: Configuration,
+	mut config: Configuration,
 ) -> Result<TaskManager, ServiceError> {
 	let sc_service::PartialComponents {
 		client,
@@ -211,6 +214,10 @@ pub fn new_full<
 	let enable_grandpa = !config.disable_grandpa;
 	let prometheus_registry = config.prometheus_registry().cloned();
 
+	// ---- NEW: Read PoBA backend URL from env or use default ----
+	let poba_backend_url = std::env::var("POBA_BACKEND_URL")
+		.unwrap_or_else(|_| "http://127.0.0.1:8000".to_string()); // FastAPI base
+
 	let rpc_extensions_builder = {
 		let client = client.clone();
 		let pool = transaction_pool.clone();
@@ -236,6 +243,7 @@ pub fn new_full<
 		telemetry: telemetry.as_mut(),
 	})?;
 
+	// ----------------- START AURA AUTHORING (unchanged) -----------------
 	if role.is_authority() {
 		let proposer_factory = sc_basic_authorship::ProposerFactory::new(
 			task_manager.spawn_handle(),
@@ -250,7 +258,7 @@ pub fn new_full<
 		let aura = sc_consensus_aura::start_aura::<AuraPair, _, _, _, _, _, _, _, _, _, _>(
 			StartAuraParams {
 				slot_duration,
-				client,
+				client: client.clone(),
 				select_chain,
 				block_import,
 				proposer_factory,
@@ -282,8 +290,31 @@ pub fn new_full<
 		task_manager
 			.spawn_essential_handle()
 			.spawn_blocking("aura", Some("block-authoring"), aura);
+
+		// --------------- NEW: spawn PoBA worker (proposals/finalize) ---------------
+		// This spawns a background async task that:
+		//  - polls your FastAPI for open requests/offers,
+		//  - computes a proposal (IDA* placeholder here),
+		//  - (TODO) submits Poba::submit_proposal(slot, score, matches),
+		//  - (TODO) for the slot this node authors, also submits Poba::finalize_slot(slot).
+		let handle = task_manager.spawn_handle();
+		let pool_for_worker = transaction_pool.clone();
+		let keystore = keystore_container.keystore().clone();
+
+		handle.spawn(
+			"poba-worker",
+			Some("poba"),
+			poba_worker::run(
+				client.clone(),
+				pool_for_worker,
+				keystore,
+				poba_backend_url,
+			)
+			.boxed(),
+		);
 	}
 
+	// ----------------- GRANDPA (unchanged) -----------------
 	if enable_grandpa {
 		// if the node isn't actively participating in consensus then it doesn't
 		// need a keystore, regardless of which protocol we use below.
@@ -301,12 +332,6 @@ pub fn new_full<
 			protocol_name: grandpa_protocol_name,
 		};
 
-		// start the full GRANDPA voter
-		// NOTE: non-authorities could run the GRANDPA observer protocol, but at
-		// this point the full voter should provide better guarantees of block
-		// and vote data availability than the observer. The observer has not
-		// been tested extensively yet and having most nodes in a network run it
-		// could lead to finality stalls.
 		let grandpa_config = sc_consensus_grandpa::GrandpaParams {
 			config: grandpa_config,
 			link: grandpa_link,
@@ -320,8 +345,6 @@ pub fn new_full<
 			offchain_tx_pool_factory: OffchainTransactionPoolFactory::new(transaction_pool),
 		};
 
-		// the GRANDPA voter task is considered infallible, i.e.
-		// if it fails we take down the service with it.
 		task_manager.spawn_essential_handle().spawn_blocking(
 			"grandpa-voter",
 			None,

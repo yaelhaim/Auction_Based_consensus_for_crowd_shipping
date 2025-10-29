@@ -46,6 +46,7 @@ sp-session.workspace = true
 sp-storage.workspace = true
 sp-transaction-pool.workspace = true
 sp-version = { features = ["serde"], workspace = true }
+pallet-bids = { path = "../pallets/bids", default-features = false }
 pallet-poba = { path = "../pallets/poba", default-features = false }
 
 
@@ -89,7 +90,8 @@ std = [
 	"sp-transaction-pool/std",
 	"sp-version/std",
 	"substrate-wasm-builder",
-	"pallet-poba/std",
+	"pallet-bids/std",
+    "pallet-poba/std",
 ]
 
 runtime-benchmarks = [

@@ -13,12 +13,15 @@ def ida_star(
     key: Callable[[State], Any] = lambda s: s,
 ) -> Tuple[Optional[State], float]:
     """
-    Returns (goal_state, optimal_cost) with minimal cost (g),
+    Returns (goal_state, optimal_cost) with minimal accumulated cost (g),
     or (None, inf) if no solution exists.
-    'h' must be admissible (never overestimates remaining cost).
-    All step-costs must be >= 0 for standard guarantees.
+
+    Requirements:
+      - h(state) must be admissible (never overestimates remaining cost).
+      - Each expand(state) yields (next_state, step_cost) with step_cost >= 0.
+      - key(state) collapses equivalent states for pruning (memoization).
     """
-    best_g = {}  # per-iteration table: key(state) -> best g seen
+    best_g = {}  # per-iteration: key(state) -> best g seen so far
 
     def search(state: State, g: float, bound: float, path: List[State]):
         f = g + h(state)
@@ -39,7 +42,7 @@ def ida_star(
         path.append(state)
         min_excess = inf
         for (s2, c) in succs:
-            if s2 in path:  # simple cycle check; for complex states this is rarely triggered
+            if s2 in path:  # cycle check for simple structures
                 continue
             res = search(s2, g + c, bound, path)
             if isinstance(res, tuple):  # found solution
