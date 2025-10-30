@@ -1,6 +1,9 @@
 //! Substrate Node Template CLI library.
 #![warn(missing_docs)]
 
+
+pub mod poba_worker;
+
 mod benchmarking;
 mod chain_spec;
 mod cli;

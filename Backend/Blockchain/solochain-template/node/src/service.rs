@@ -12,7 +12,8 @@ use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use std::{sync::Arc, time::Duration};
 
 // ---- NEW: bring our PoBA worker module ----
-mod poba_worker;
+use crate::poba_worker;
+
 
 pub(crate) type FullClient = sc_service::TFullClient<
 	Block,

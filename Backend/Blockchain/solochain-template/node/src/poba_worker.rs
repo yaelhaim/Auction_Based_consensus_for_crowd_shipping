@@ -2,9 +2,6 @@
 //! then asks backend to submit signed extrinsics (submit_proposal / finalize_slot).
 
 use crate::service::FullClient;
-use sc_transaction_pool::TransactionPool;
-use sp_api::ProvideRuntimeApi;
-use sp_runtime::traits::Block as BlockT;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,6 +9,9 @@ use std::{
 
 use reqwest::Client as Http;
 use serde::{Deserialize, Serialize};
+use sp_api::ProvideRuntimeApi;
+// אין שימוש ב-BlockT כעת, אז לא צריך ג'נריקס.
+use log; // ודאי שב-Cargo.toml יש log = "0.4"
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketRequest {
@@ -68,10 +68,12 @@ fn current_slot() -> u64 {
     ms / 6000
 }
 
-pub async fn run<B: BlockT>(
+pub async fn run(
     _client: Arc<FullClient>,
-    _tx_pool: Arc<TransactionPool<B, FullClient>>,
-    _keystore: sp_core::traits::BareCryptoStorePtr,
+    // מקבל כל pool wrapper (כולל TransactionPoolWrapper) — לא משתמשים בו כרגע.
+    _tx_pool: Arc<dyn Send + Sync>,
+    // מקבל כל keystore pointer — לא משתמשים בו כרגע.
+    _keystore: impl Send + Sync + 'static,
     backend_url: String,
 ) {
     let http = Http::new();
@@ -79,7 +81,7 @@ pub async fn run<B: BlockT>(
     loop {
         // 1) Pull open market from backend
         let req_url = format!("{}/poba/requests-open", backend_url);
-        let off_url = format!("{}/poba/offers-open", backend_url);
+        let off_url = format!("{}/poba/offers-active", backend_url);
 
         let (requests, offers): (Vec<MarketRequest>, Vec<MarketOffer>) = match (
             http.get(&req_url).send().await,
@@ -116,11 +118,7 @@ pub async fn run<B: BlockT>(
             .send()
             .await;
 
-        let BuildResp {
-            total_score,
-            matches,
-            ..
-        } = match resp {
+        let BuildResp { total_score, matches, .. } = match resp {
             Ok(r) => match r.json::<BuildResp>().await {
                 Ok(v) => v,
                 Err(e) => {
@@ -138,11 +136,7 @@ pub async fn run<B: BlockT>(
 
         // 3) Ask backend to submit signed extrinsic
         let submit_url = format!("{}/poba/submit-proposal", backend_url);
-        let body = SubmitProposalBody {
-            slot,
-            total_score,
-            matches: matches.clone(),
-        };
+        let body = SubmitProposalBody { slot, total_score, matches: matches.clone() };
         if let Err(e) = http.post(&submit_url).json(&body).send().await {
             log::warn!("PoBA worker: submit-proposal failed: {e}");
         }

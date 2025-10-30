@@ -18,10 +18,7 @@ router = APIRouter(prefix="", tags=["offers"])
 # ---------- Helpers ----------
 
 def _get_user_id(user: Any) -> str:
-    """
-    get_current_user יכול להחזיר dict או מודל ORM.
-    הפונקציה הזו מחלצת id בצורה בטוחה.
-    """
+
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     if isinstance(user, dict):
@@ -37,7 +34,6 @@ def _get_user_id(user: Any) -> str:
 # ---------- Schemas ----------
 
 class OfferCreate(BaseModel):
-    # לא מקבלים driver_user_id מהקליינט – נלקח מה-JWT
     from_address: str
     to_address: Optional[str] = None
     window_start: datetime
@@ -96,7 +92,7 @@ async def create_offer(
         "to_lon": to_lon,
         "window_start": payload.window_start,
         "window_end": payload.window_end,
-        "min_price": str(payload.min_price),  # NUMERIC → טקסט
+        "min_price": str(payload.min_price),
         "types": payload.types,
         "notes": payload.notes,
         "status": "active",

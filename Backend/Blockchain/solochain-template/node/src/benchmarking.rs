@@ -2,7 +2,10 @@
 //!
 //! Should only be used for benchmarking as it may break in other contexts.
 
+use sp_runtime::generic::SignedPayload;
+
 use crate::service::FullClient;
+
 
 use runtime::{AccountId, Balance, BalancesCall, SystemCall};
 use sc_cli::Result;
@@ -125,7 +128,7 @@ pub fn create_benchmark_extrinsic(
 		frame_system::WeightReclaim::<runtime::Runtime>::new(),
 	);
 
-	let raw_payload = runtime::SignedPayload::from_raw(
+	let raw_payload = SignedPayload::from_raw(
 		call.clone(),
 		tx_ext.clone(),
 		(
