@@ -11,7 +11,6 @@ use sp_std::vec::Vec;
 // --------------------------- Domain Types ---------------------------
 
 /// A single matched pair (request ↔ offer) with a score contribution.
-/// Stored on-chain inside a bounded vector (not passed directly in the call).
 #[derive(Clone, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo, RuntimeDebug)]
 pub struct Match {
     pub request_uuid: [u8; 16],
@@ -56,15 +55,26 @@ pub mod pallet {
     pub type BestProposal<T: Config> =
         StorageMap<_, Blake2_128Concat, u64 /*slot*/, Proposal, OptionQuery>;
 
+    /// Final winner per slot after `finalize_slot`.
+    #[pallet::storage]
+    #[pallet::getter(fn finalized_proposal)]
+    pub type FinalizedProposal<T: Config> =
+        StorageMap<_, Blake2_128Concat, u64 /*slot*/, Proposal, OptionQuery>;
+
+    /// The last finalized slot (for convenience from UI/backend).
+    #[pallet::storage]
+    #[pallet::getter(fn last_finalized_slot)]
+    pub type LastFinalizedSlot<T: Config> = StorageValue<_, u64, ValueQuery>;
+
     // -------- Events --------
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        /// A proposal was submitted for `slot` with `total_score`.
-        ProposalSubmitted(u64, i64),
-        /// The slot was finalized with the winning `total_score`.
-        SlotFinalized(u64, i64),
+        /// A proposal was submitted for `slot` with `total_score` and `matches` count.
+        ProposalSubmitted { slot: u64, total_score: i64, matches: u32 },
+        /// The slot was finalized with the winning `total_score` and `matches` count.
+        SlotFinalized     { slot: u64, total_score: i64, matches: u32 },
     }
 
     // -------- Errors --------
@@ -83,9 +93,8 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Submit (or improve) the best proposal for a given slot.
         ///
-        /// NOTE: To satisfy FRAME's `DecodeWithMemTracking` requirement on call parameters,
-        /// we accept `Vec` of tuples (which implement the required traits),
-        /// and convert them to `Match` + `BoundedVec` inside.
+        /// NOTE: To satisfy FRAME's DecodeWithMemTracking on call parameters,
+        /// we accept Vec of tuples and convert inside.
         #[pallet::weight(10_000)]
         pub fn submit_proposal(
             origin: OriginFor<T>,
@@ -113,31 +122,61 @@ pub mod pallet {
                 Some(existing) => {
                     if total_score > existing.total_score {
                         let new_best = Proposal { total_score, matches: bounded };
-                        BestProposal::<T>::insert(slot, new_best);
-                        Self::deposit_event(Event::ProposalSubmitted(slot, total_score));
+                        BestProposal::<T>::insert(slot, &new_best);
+                        Self::deposit_event(Event::ProposalSubmitted {
+                            slot,
+                            total_score,
+                            matches: new_best.matches.len() as u32,
+                        });
                     }
                 }
                 None => {
                     let new_best = Proposal { total_score, matches: bounded };
-                    BestProposal::<T>::insert(slot, new_best);
-                    Self::deposit_event(Event::ProposalSubmitted(slot, total_score));
+                    BestProposal::<T>::insert(slot, &new_best);
+                    Self::deposit_event(Event::ProposalSubmitted {
+                        slot,
+                        total_score,
+                        matches: new_best.matches.len() as u32,
+                    });
                 }
             }
 
             Ok(())
         }
 
-        /// Finalize a slot: read the best proposal and emit `SlotFinalized`.
-        /// (MVP) Only emits an event.
+        /// Finalize a slot: move best → finalized, update last slot, emit rich event.
         #[pallet::weight(10_000)]
         pub fn finalize_slot(origin: OriginFor<T>, slot: u64) -> DispatchResult {
             let _who = ensure_signed(origin)?;
-            let best = BestProposal::<T>::get(slot).ok_or(Error::<T>::NoProposalForSlot)?;
-            Self::deposit_event(Event::SlotFinalized(slot, best.total_score));
+
+            // Take removes BestProposal to keep state tidy (optional).
+            let best = BestProposal::<T>::take(slot);
+
+            if let Some(winner) = best {
+                FinalizedProposal::<T>::insert(slot, &winner);
+                LastFinalizedSlot::<T>::put(slot);
+
+                Self::deposit_event(Event::SlotFinalized {
+                    slot,
+                    total_score: winner.total_score,
+                    matches: winner.matches.len() as u32,
+                });
+            } else {
+                // No proposal for slot – record as finalized empty.
+                FinalizedProposal::<T>::remove(slot);
+                LastFinalizedSlot::<T>::put(slot);
+
+                Self::deposit_event(Event::SlotFinalized {
+                    slot,
+                    total_score: 0,
+                    matches: 0,
+                });
+            }
+
             Ok(())
         }
     }
 }
 
-// Re-export the pallet items so `impl pallet_poba::Config for Runtime` works.
+// Re-export for `impl pallet_poba::Config for Runtime`
 pub use pallet::*;

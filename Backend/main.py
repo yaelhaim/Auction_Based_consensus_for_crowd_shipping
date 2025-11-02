@@ -54,19 +54,22 @@ LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def _setup_logger(name: str, filename: str) -> logging.Logger:
+    """Create a named logger that logs to rotating file + stdout (for Docker/K8s)."""
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s')
-    # file (rotating)
+
     fh = RotatingFileHandler(os.path.join(LOG_DIR, filename), maxBytes=2_000_000, backupCount=5, encoding="utf-8")
     fh.setFormatter(fmt)
-    # stdout (docker/k8s)
+
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
-    # avoid duplicate handlers on reload
+
+    # Avoid duplicate handlers on reload
     if not logger.handlers:
         logger.addHandler(fh)
         logger.addHandler(sh)
+
     return logger
 
 _setup_logger("clearing", "clearing.log")
@@ -93,6 +96,7 @@ def _clearing_job():
 async def lifespan(app: FastAPI):
     # ---- Startup ----
     try:
+        # IDA* clearing every 60 seconds (adjust as needed)
         scheduler.add_job(_clearing_job, IntervalTrigger(seconds=60))
         scheduler.start()
         logger.info("Scheduler started (IDA* every 60s)")
@@ -112,27 +116,44 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --------------------------- CORS ---------------------------
+# MVP: allow all; tighten in production by setting ALLOW_ORIGINS env (comma-separated).
+allow_origins_env = os.getenv("ALLOW_ORIGINS")
+allow_origins = [o.strip() for o in allow_origins_env.split(",")] if allow_origins_env else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # MVP: allow all; tighten in production
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --------------------------- Health ---------------------------
+# --------------------------- Health (ready + live) ---------------------------
+# Some infra/tools expect /health, others /healthz; PoBA worker can ping /poba/ping.
+@app.get("/health")
+def health():
+    """Basic liveness/ready probe (200 OK)."""
+    return {"status": "ok"}
+
 @app.get("/healthz")
 def healthz():
+    """K8s-style health endpoint (200 OK)."""
     return {"ok": True}
+
+@app.get("/poba/ping")
+def poba_ping():
+    """Lightweight endpoint for the PoBA worker connectivity check."""
+    return {"poba": "ok"}
 
 @app.get("/health/db")
 def db_health(db: Session = Depends(get_db)):
-    """Returns current DB time to verify connectivity."""
+    """Returns current DB time to verify DB connectivity."""
     row = db.execute(text("SELECT NOW() AS now")).mappings().first()
     return {"db_time": str(row["now"])}
 
 @app.get("/debug/dbinfo")
 def db_info(db: Session = Depends(get_db)):
+    """Quick DB identity (database, user, schema)."""
     row = db.execute(
         text("SELECT current_database() as db, current_user as user, current_schema() as schema")
     ).mappings().first()

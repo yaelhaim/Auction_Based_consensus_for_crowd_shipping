@@ -22,7 +22,7 @@ use sp_runtime::{
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
 
-// --------------------- Opaque types (CLI/light clients) ---------------------
+// --------------------- Opaque types ---------------------
 pub mod opaque {
     use super::*;
     use sp_runtime::{
@@ -32,9 +32,8 @@ pub mod opaque {
 
     pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
 
-    /// Opaque types for light clients / CLI.
     pub type Header = generic::Header<super::BlockNumber, BlakeTwo256>;
-    pub type Block = generic::Block<Header, UncheckedExtrinsic>;
+    pub type Block  = generic::Block<Header, UncheckedExtrinsic>;
     pub type BlockId = generic::BlockId<Block>;
     pub type Hash = <BlakeTwo256 as HashT>::Output;
 }
@@ -52,7 +51,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: alloc::borrow::Cow::Borrowed("solochain-template-runtime"),
     impl_name: alloc::borrow::Cow::Borrowed("solochain-template-runtime"),
     authoring_version: 1,
-    spec_version: 101,
+    spec_version: 103, // ⬅️ העליתי כדי להחיל את שינויי המטא-דאטה
     impl_version: 1,
     apis: apis::RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -61,9 +60,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 
 // ----------------------------- Block time (6s) ------------------------------
 mod block_times {
-    /// Target/expected block time (~6s).
     pub const MILLI_SECS_PER_BLOCK: u64 = 6000;
-    /// Picked up by pallet_timestamp and then Aura.
     pub const SLOT_DURATION: u64 = MILLI_SECS_PER_BLOCK;
 }
 pub use block_times::*;
@@ -110,7 +107,7 @@ construct_runtime!(
         TransactionPayment: pallet_transaction_payment,
         Sudo: pallet_sudo,
 
-        // Optional example pallet
+        // Optional example
         Template: pallet_template,
 
         // Our PoBA pallet
@@ -118,12 +115,11 @@ construct_runtime!(
     }
 );
 
-// ✅ Re-export Call aliases expected by node-side code (benchmarking, etc.)
+// ✅ Re-export Call aliases expected by node-side code
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
 
 // ------------------------ Signed extensions / extrinsics --------------------
-// NOTE: These depend on `Runtime` so we place them *after* construct_runtime!.
 pub type TxExtension = (
     frame_system::CheckNonZeroSender<Runtime>,
     frame_system::CheckSpecVersion<Runtime>,
