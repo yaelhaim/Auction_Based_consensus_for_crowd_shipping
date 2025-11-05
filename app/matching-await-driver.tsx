@@ -1,15 +1,12 @@
-// MatchingAwaitDriver.tsx
+// app/matching-await-driver.tsx
 // Strict match gating: require a VALID assignment_id (UUID or positive int).
-// No fallback. No navigation without a solid assignment id.
+// Read-only: NO local triggers. We rely only on authoritative status.
+// No navigation without a solid assignment id.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  deferPushForOffer,
-  checkOfferMatchStatus,
-  clearAuctions,
-} from "../lib/api";
+import { deferPushForOffer, checkOfferMatchStatus } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
 
@@ -22,6 +19,7 @@ const cityMap = require("../assets/images/city_map_photo.jpg");
 // ---------- helpers: strong id validation ----------
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function isValidUuid(v?: unknown): boolean {
   return typeof v === "string" && UUID_RE.test(v.trim());
 }
@@ -69,10 +67,12 @@ export default function MatchingAwaitDriver() {
     if (!offerId || !token) return;
 
     async function start() {
+      // Soft deadline for polling
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
 
+      // Defer push notifications for this offer (optional nicety)
       try {
         const resp = await deferPushForOffer(
           String(token),
@@ -91,22 +91,7 @@ export default function MatchingAwaitDriver() {
         );
       }
 
-      clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
-        .then((r) =>
-          console.log(
-            "[await-driver] clearAuctions →",
-            r?.cleared,
-            r?.reason || "",
-            r?.debug_counts || {}
-          )
-        )
-        .catch((e) =>
-          console.log(
-            "[await-driver] clearAuctions error:",
-            (e as any)?.message || e
-          )
-        );
-
+      // Authoritative polling only
       async function poll() {
         try {
           const raw = await checkOfferMatchStatus(
@@ -115,7 +100,6 @@ export default function MatchingAwaitDriver() {
           );
           if (cancelled) return;
 
-          // Debug log once every poll (can comment out later)
           console.log(
             "[await-driver] poll status payload:",
             JSON.stringify(raw)
@@ -124,12 +108,10 @@ export default function MatchingAwaitDriver() {
           const st = (raw?.status ?? "").toString().toLowerCase().trim();
           const concreteAssignmentId = hasSolidAssignmentId(raw);
 
-          // Optional: also capture requestId, but we won't trust it alone
+          // Optional: capture requestId (nice-to-have)
           const reqIdNorm = normalizeId(raw?.request_id ?? raw?.requestId);
           if (reqIdNorm) setRequestId(reqIdNorm);
 
-          // STRICT RULE:
-          // We ONLY flip to matched if status is "matched" AND we have a solid assignment id
           if (st === "matched" && concreteAssignmentId) {
             setAssignmentId(concreteAssignmentId);
             setStatus("matched");
@@ -166,7 +148,6 @@ export default function MatchingAwaitDriver() {
   }
 
   function openAssignment() {
-    // Navigate ONLY when we have a solid assignmentId
     if (!assignmentId) return;
     const params: Record<string, string> = {
       role: "driver",
@@ -174,13 +155,10 @@ export default function MatchingAwaitDriver() {
       offerId: String(offerId),
       assignmentId: assignmentId,
     };
-    // requestId is optional (nice-to-have), but not required for navigation
     if (requestId) params.requestId = requestId;
-
     router.replace({ pathname: "/assignment_details", params });
   }
 
-  // CTA enabled ONLY when we have a verified assignment id
   const canOpen = status === "matched" && !!assignmentId;
 
   return (

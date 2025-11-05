@@ -715,8 +715,23 @@ export async function getAssignmentById(
 
 /* ----------------------------- Matching triggers ---------------------------- */
 /** Ask server to try and create a REAL assignment for a driver offer (atomic). */
+function ensureMatchTriggerAllowed() {
+  // Never allow from production mobile by default:
+  const flag =
+    process.env.EXPO_PUBLIC_ALLOW_MATCH_TRIGGERS ??
+    (Constants.expoConfig?.extra as any)?.ALLOW_MATCH_TRIGGERS ??
+    "false";
+  if (String(flag).toLowerCase() !== "true") {
+    throw new Error(
+      "Client-side matching trigger is disabled. Wait for on-chain finalization."
+    );
+  }
+}
+
+/** Ask server to try and create a REAL assignment for a driver offer (atomic). */
 export async function runMatchingForOffer(token: string, offerId: string) {
-  const res = await jsonFetch<
+  ensureMatchTriggerAllowed();
+  return jsonFetch<
     | {
         status: "matched";
         message: string;
@@ -728,12 +743,12 @@ export async function runMatchingForOffer(token: string, offerId: string) {
     method: "POST",
     headers: { ...authHeaders(token) },
   });
-  return res;
 }
 
 /** Ask server to try and create a REAL assignment for a request (atomic). */
 export async function runMatchingForRequest(token: string, requestId: string) {
-  const res = await jsonFetch<
+  ensureMatchTriggerAllowed();
+  return jsonFetch<
     | {
         status: "matched";
         message: string;
@@ -745,5 +760,4 @@ export async function runMatchingForRequest(token: string, requestId: string) {
     method: "POST",
     headers: { ...authHeaders(token) },
   });
-  return res;
 }

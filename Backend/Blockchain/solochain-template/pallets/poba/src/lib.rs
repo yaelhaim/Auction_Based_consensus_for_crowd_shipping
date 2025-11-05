@@ -1,3 +1,5 @@
+//pallets/poba/src/lib.rs
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 // --------------------------- Imports & Prelude ---------------------------
@@ -83,8 +85,10 @@ pub mod pallet {
     pub enum Error<T> {
         /// Submitted proposal has more matches than allowed by the bound.
         TooManyMatches,
-        /// No proposal exists for the given slot.
+        /// No proposal exists for the given slot (or proposal has empty matches).
         NoProposalForSlot,
+        /// Submitted proposal has zero matches (not allowed).
+        EmptyMatches,
     }
 
     // -------- Calls --------
@@ -118,6 +122,9 @@ pub mod pallet {
             let bounded: MatchesBounded =
                 BoundedVec::try_from(tmp).map_err(|_| Error::<T>::TooManyMatches)?;
 
+            // Reject empty proposals
+            ensure!(!bounded.is_empty(), Error::<T>::EmptyMatches);
+
             match BestProposal::<T>::get(slot) {
                 Some(existing) => {
                     if total_score > existing.total_score {
@@ -149,29 +156,18 @@ pub mod pallet {
         pub fn finalize_slot(origin: OriginFor<T>, slot: u64) -> DispatchResult {
             let _who = ensure_signed(origin)?;
 
-            // Take removes BestProposal to keep state tidy (optional).
-            let best = BestProposal::<T>::take(slot);
+            // Must have a non-empty best proposal for this slot
+            let winner = BestProposal::<T>::take(slot).ok_or(Error::<T>::NoProposalForSlot)?;
+            ensure!(!winner.matches.is_empty(), Error::<T>::NoProposalForSlot);
 
-            if let Some(winner) = best {
-                FinalizedProposal::<T>::insert(slot, &winner);
-                LastFinalizedSlot::<T>::put(slot);
+            FinalizedProposal::<T>::insert(slot, &winner);
+            LastFinalizedSlot::<T>::put(slot);
 
-                Self::deposit_event(Event::SlotFinalized {
-                    slot,
-                    total_score: winner.total_score,
-                    matches: winner.matches.len() as u32,
-                });
-            } else {
-                // No proposal for slot – record as finalized empty.
-                FinalizedProposal::<T>::remove(slot);
-                LastFinalizedSlot::<T>::put(slot);
-
-                Self::deposit_event(Event::SlotFinalized {
-                    slot,
-                    total_score: 0,
-                    matches: 0,
-                });
-            }
+            Self::deposit_event(Event::SlotFinalized {
+                slot,
+                total_score: winner.total_score,
+                matches: winner.matches.len() as u32,
+            });
 
             Ok(())
         }

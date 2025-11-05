@@ -1,5 +1,17 @@
-# Backend/routes_requests.py
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+
+# NOTE: We *try* to import the auto-matcher trigger. If it's not available yet,
+# we fall back to a no-op so the service won't crash.
+try:
+    from .matching_auto import try_auto_match  # preferred location
+except Exception:
+    try:
+        from Backend.matching_auto import try_auto_match  # alternative layout
+    except Exception:
+        def try_auto_match() -> None:
+            """No-op fallback when auto-matching module isn't present."""
+            return
+
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
@@ -8,7 +20,7 @@ from decimal import Decimal
 # db session
 from .Database.db import get_db
 
-# current user dep (כבר קיים אצלך)
+# current user dep
 from .auth_dep import get_current_user
 
 # server-side geocoding
@@ -18,12 +30,11 @@ from sqlalchemy import text
 
 router = APIRouter(prefix="", tags=["requests"])
 
-
 # ---------- Pydantic v2 input model ----------
 class RequestCreate(BaseModel):
   model_config = ConfigDict(from_attributes=True)
 
-  # כולל 'ride' כדי שה-frontend יוכל לשלוח ride ישירות
+  # Include 'ride' so the frontend can send ride directly
   type: Literal["package", "passenger", "ride"] = "package"
   from_address: str = Field(..., min_length=3, max_length=255)
   to_address: str = Field(..., min_length=3, max_length=255)
@@ -50,16 +61,17 @@ class RequestCreate(BaseModel):
       raise ValueError("window_end must be after window_start")
     return v
 
-
 # ---------- Helper ----------
 def _user_id(u) -> str:
-  """Supports both dict and object user representations."""
+  """
+  Supports both dict and object user representations.
+  Returns user id or None.
+  """
   if hasattr(u, "id"):
     return getattr(u, "id")
   if isinstance(u, dict):
     return u.get("id") or u.get("user_id")
   return None
-
 
 # ---------- Routes ----------
 @router.post("/requests", status_code=status.HTTP_201_CREATED)
@@ -67,7 +79,13 @@ async def create_request(
   payload: RequestCreate,
   db = Depends(get_db),
   current_user = Depends(get_current_user),
+  background_tasks: BackgroundTasks = None,
 ):
+  """
+  Create a user request. After successful insert+commit we trigger a debounced
+  auto-matching pipeline (non-blocking). The trigger is safe to call even if
+  auto-matching is disabled by env; it'll no-op.
+  """
   uid = _user_id(current_user)
   if not uid:
     raise HTTPException(status_code=401, detail="Unauthorized (no user id)")
@@ -90,7 +108,7 @@ async def create_request(
       raise HTTPException(400, detail="Could not geocode to_address")
     to_lat, to_lon = dst
 
-  # --- Normalize type: 'ride' → treat as 'passenger' for matching logic (DB יכול לשמור ride/ passenger, לבחירתך) ---
+  # Normalize type: 'ride' → treat as 'passenger' for matching logic
   raw_type = str(payload.type)
   norm_type = "passenger" if raw_type.strip().lower() == "ride" else raw_type
 
@@ -151,12 +169,15 @@ async def create_request(
   if not row:
     raise HTTPException(status_code=500, detail="Insert failed (no row)")
 
+  # Non-blocking, debounced auto-match trigger (safe if module/env disabled)
+  if background_tasks is not None:
+    background_tasks.add_task(try_auto_match)
+
   return {
     "id": str(row["id"]),
     "status": row["status"],
     "created_at": row["created_at"],
   }
-
 
 # ---------- Defer push for this request ----------
 @router.post("/requests/{request_id}/defer_push")
@@ -210,7 +231,6 @@ async def defer_push_for_request(
     )
 
   return {"ok": True, "push_defer_until": defer_until.isoformat()}
-
 
 # ---------- Match status for waiting screen ----------
 @router.get("/requests/{request_id}/match_status")
@@ -274,7 +294,6 @@ async def get_match_status(
     return payload
 
   return {"status": "pending"}
-
 
 @router.get("/healthz")
 def healthz():

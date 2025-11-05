@@ -1,23 +1,25 @@
-# app/routes_poba.py
-# Stable PoBA API for node-worker & app.
-# - All 16-byte IDs are 32-char hex strings (no raw bytes in JSON).
-# - Robust signer config (SURI or mnemonic).
-# - Flexible runtime call names via ENV.
-# - Structured errors with clear hints for the app.
+# PoBA (Proof-of-Bid-Assignment) REST endpoints:
+# - Pull open requests/offers from DB
+# - Build a proposal (IDA*) with distance+price cost model
+# - Submit proposal & finalize slot on a Substrate chain (with priority-aware retry)
+# - Optionally apply proposal into DB assignments
+#
+# Notes:
+# * Includes a penalized "skip" so IDA* won’t stall on the first request.
+# * submit_proposal now retries with increasing tip to overcome "Priority is too low (1014)".
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Tuple, Annotated, Iterable
+from typing import List, Tuple, Annotated, Iterable, Optional
 from uuid import UUID
 import os, logging, math
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
-# --- DB plumbing ---
 from .Database.db import get_db
 from .models import Request, CourierOffer
 
-# --- Substrate RPC client ---
 from substrateinterface import SubstrateInterface, Keypair
 try:
     from substrateinterface.exceptions import SubstrateRequestException
@@ -25,19 +27,16 @@ except Exception:
     class SubstrateRequestException(Exception):
         pass
 
-import json
 from json.decoder import JSONDecodeError
 import time
 
-# --- IDA* core ---
 from .auction.ida_star_core import ida_star
 
 router = APIRouter(prefix="/poba", tags=["poba"])
 log = logging.getLogger("poba")
 
-# -----------------------
-# Environment & Defaults
-# -----------------------
+
+# ------------------------------ Chain helpers ------------------------------
 
 def _ws_url() -> str:
     return os.getenv("SUBSTRATE_WS_URL", "ws://127.0.0.1:9944")
@@ -46,7 +45,8 @@ def _type_registry_preset() -> str:
     return os.getenv("SUBSTRATE_TYPE_REGISTRY_PRESET", "substrate-node-template")
 
 def _pallet_name() -> str:
-    return os.getenv("POBA_PALLET", "Poba")
+    # IMPORTANT: the module name as appears in construct_runtime! is "PoBA"
+    return os.getenv("POBA_PALLET", "PoBA")
 
 def _call_submit() -> str:
     return os.getenv("POBA_CALL_SUBMIT", "submit_proposal")
@@ -55,22 +55,22 @@ def _call_finalize() -> str:
     return os.getenv("POBA_CALL_FINALIZE", "finalize_slot")
 
 def _param_matches() -> str:
-    # Runtime param name for the matches vector
-    # (your runtime currently uses "matches"; older drafts used "matches_in")
+    # Some chains use "matches", others "match_items" – make it configurable.
     return os.getenv("POBA_PARAM_MATCHES", "matches")
 
-# ---------------------------------------------------------
-# Helpers: 16-byte UUIDs as hex strings (32 hex characters)
-# ---------------------------------------------------------
+
+# ------------------------------ Types & utils ------------------------------
 
 Hex32 = Annotated[str, Field(min_length=32, max_length=32, pattern=r"^[0-9a-fA-F]{32}$")]
 
 def uuid_to_16_hex(u: UUID) -> str:
-    """Return 16-byte UUID as 32-char lowercase hex."""
     return u.hex
 
+def _hex32_to_uuid(s: str) -> UUID:
+    # 32-hex (no dashes) -> UUID
+    return UUID(hex=s)
+
 def hex16_to_u8_array_16(s: str) -> List[int]:
-    """Convert 32-hex string to [u8;16] for SCALE."""
     try:
         b = bytes.fromhex(s)
     except ValueError as e:
@@ -88,11 +88,9 @@ def hex16_to_u8_array_16(s: str) -> List[int]:
     return list(b)
 
 def get_substrate() -> SubstrateInterface:
-    """Connect to WS with sane defaults and clear errors."""
     url = _ws_url()
     preset = _type_registry_preset()
     try:
-        # auto_reconnect=True מייצב לך את החיבור
         return SubstrateInterface(
             url=url,
             ss58_format=42,
@@ -109,14 +107,9 @@ def get_substrate() -> SubstrateInterface:
             "hint": "Ensure node is running with WS on the given URL",
         })
 
-
 def get_signer() -> Keypair:
-    """
-    Prefer SURI (SUBSTRATE_SIGNER_URI, e.g. //Alice), fallback to mnemonic (SUBSTRATE_SIGNER_MNEMONIC).
-    """
     uri = os.getenv("SUBSTRATE_SIGNER_URI")
     mnemonic = os.getenv("SUBSTRATE_SIGNER_MNEMONIC")
-
     if uri:
         try:
             return Keypair.create_from_uri(uri)
@@ -126,7 +119,6 @@ def get_signer() -> Keypair:
                 "error": str(e),
                 "hint": "SUBSTRATE_SIGNER_URI is not a valid SURI (e.g. //Alice)",
             })
-
     if mnemonic:
         try:
             return Keypair.create_from_mnemonic(mnemonic)
@@ -136,15 +128,13 @@ def get_signer() -> Keypair:
                 "error": str(e),
                 "hint": "Provide a valid 12/24-word mnemonic or use SUBSTRATE_SIGNER_URI",
             })
-
     raise HTTPException(status_code=400, detail={
         "code": "signer_not_set",
         "hint": "Define SUBSTRATE_SIGNER_URI (e.g. //Alice) or SUBSTRATE_SIGNER_MNEMONIC",
     })
 
-# ---------------------------------------------------------
-# Schemas: JSON-safe fields (no bytes)
-# ---------------------------------------------------------
+
+# ------------------------------ Schemas ------------------------------
 
 class MarketRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -154,7 +144,9 @@ class MarketRequest(BaseModel):
     to_lat: int
     to_lon: int
     max_price_cents: int
-    kind: int  # 0=package, 1=passenger
+    kind: int
+    window_start: int
+    window_end: int
 
 class MarketOffer(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -166,7 +158,7 @@ class MarketOffer(BaseModel):
     to_lon: int
     window_start: int
     window_end: int
-    types_mask: int  # bitmask (1=package, 2=passenger ...)
+    types_mask: int
 
 class MatchItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -186,19 +178,27 @@ class FinalizeBody(BaseModel):
     slot: Annotated[int, Field(ge=0)]
 
 class BuildBody(BaseModel):
+    """
+    Compute a proposal for a given (requests, offers) snapshot.
+    Optional distance caps allow pre-filtering pairs (good for large markets).
+    """
     model_config = ConfigDict(extra="ignore")
     slot: Annotated[int, Field(ge=0)]
     requests: List[MarketRequest]
     offers: List[MarketOffer]
+
+    # Optional soft caps (km). If provided, pairs exceeding thresholds are discarded.
+    max_start_km: Optional[float] = Field(default=None, ge=0)
+    max_end_km: Optional[float] = Field(default=None, ge=0)
+    max_total_km: Optional[float] = Field(default=None, ge=0)
 
 class BuildResp(BaseModel):
     slot: int
     total_score: int
     matches: List[MatchItem]
 
-# ---------------------------------------
-# Open market endpoints (node worker pulls)
-# ---------------------------------------
+
+# ------------------------------ DB-facing endpoints ------------------------------
 
 @router.get("/requests-open", response_model=List[MarketRequest])
 def requests_open(db: Session = Depends(get_db)) -> List[MarketRequest]:
@@ -211,6 +211,9 @@ def requests_open(db: Session = Depends(get_db)) -> List[MarketRequest]:
     )
     out: List[MarketRequest] = []
     for r in rows:
+        # timestamps → ms; if tz-naive in DB, treat as UTC
+        ws = int(r.window_start.replace(tzinfo=r.window_start.tzinfo or timezone.utc).timestamp() * 1000) if getattr(r, "window_start", None) else 0
+        we = int(r.window_end.replace(tzinfo=r.window_end.tzinfo or timezone.utc).timestamp() * 1000) if getattr(r, "window_end", None) else 0
         out.append(MarketRequest(
             uuid_16=uuid_to_16_hex(r.id),
             from_lat=int(r.from_lat or 0),
@@ -219,6 +222,8 @@ def requests_open(db: Session = Depends(get_db)) -> List[MarketRequest]:
             to_lon=int(r.to_lon or 0),
             max_price_cents=int(round((r.max_price or 0) * 100)),
             kind=0 if r.type == "package" else 1,
+            window_start=ws,
+            window_end=we,
         ))
     return out
 
@@ -241,7 +246,7 @@ def _offers_active_impl(db: Session) -> List[MarketOffer]:
             to_lon=int(o.to_lon or 0),
             window_start=int(o.window_start.timestamp() * 1000) if o.window_start else 0,
             window_end=int(o.window_end.timestamp() * 1000) if o.window_end else 0,
-            types_mask=1,  # 1=package; extend later
+            types_mask=1,
         ))
     return out
 
@@ -253,21 +258,24 @@ def offers_active(db: Session = Depends(get_db)) -> List[MarketOffer]:
 def offers_open_compat(db: Session = Depends(get_db)) -> List[MarketOffer]:
     return _offers_active_impl(db)
 
-# ----------------------------------------------------
-# Submit proposal / Finalize slot (extrinsics via RPC)
-# ----------------------------------------------------
+
+# ------------------------------ Chain calls ------------------------------
 
 @router.post("/submit-proposal")
 def submit_proposal(body: SubmitProposalBody):
     """
-    Submit the best proposal to the PoBA pallet.
-    Runtime expects a bounded vector of: ([u8;16], [u8;16], u32, i64)
-    Param name for matches is configurable via POBA_PARAM_MATCHES (default: matches).
+    Submit (or improve) the best proposal for a slot to the PoBA pallet.
+    Now includes retry with increasing `tip` to overcome 1014 "Priority is too low".
+    Tunables via env:
+      POBA_TX_MAX_ATTEMPTS (default 3)
+      POBA_TX_TIP_BASE     (default 0)
+      POBA_TX_TIP_STEP     (default 1000)
+      POBA_TX_BACKOFF_MS   (default 150)
     """
     substrate = get_substrate()
     signer = get_signer()
 
-    # Fail-fast: WS health
+    # Quick health probe (helps with nicer error if WS is down)
     try:
         health = substrate.rpc_request("system_health", [])
         log.info("system_health: %s", health)
@@ -281,6 +289,7 @@ def submit_proposal(body: SubmitProposalBody):
 
     matches_param_name = _param_matches()
     try:
+        # Convert match items → SCALE tuple-vec
         match_tuples: List[List[int] | Tuple[List[int], List[int], int, int]] = []
         for m in body.matches:
             match_tuples.append([
@@ -300,28 +309,60 @@ def submit_proposal(body: SubmitProposalBody):
             },
         )
 
-        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
-        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+        # ---- NEW: priority-aware retry with increasing tip ----
+        MAX_ATTEMPTS = int(os.getenv("POBA_TX_MAX_ATTEMPTS", "3"))
+        BASE_TIP     = int(os.getenv("POBA_TX_TIP_BASE", "0"))
+        TIP_STEP     = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
+        BACKOFF_MS   = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
 
-        try:
-            if hasattr(receipt, "is_success") and not receipt.is_success:
+        last_err: Optional[Exception] = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            tip = BASE_TIP + (attempt - 1) * TIP_STEP
+            extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer, tip=tip)
+
+            try:
+                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+                ok = getattr(receipt, "is_success", None)
+                log.info("submit_proposal included: ok=%s hash=%s tip=%s", ok, receipt.extrinsic_hash, tip)
+                for ev in getattr(receipt, "triggered_events", []) or []:
+                    try:
+                        mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
+                        log.info("submit_proposal event: %s::%s", mod, name)
+                    except Exception:
+                        pass
+
+                if ok is False:
+                    # Non-priority failure -> bubble up immediately
+                    raise HTTPException(status_code=502, detail={
+                        "code": "dispatch_failed",
+                        "hint": "Check pallet event / error data; ensure types and param names match runtime",
+                        "receipt": str(getattr(receipt, "error_message", "")),
+                    })
+
+                return {"ok": True, "hash": receipt.extrinsic_hash}
+
+            except SubstrateRequestException as e:
+                # Handle 1014 "Priority is too low"
+                msg = str(getattr(e, "args", [""])[0]) or str(e)
+                is_priority_low = ("Priority is too low" in msg) or ("'code': 1014" in msg) or ('"code": 1014' in msg)
+                if is_priority_low and attempt < MAX_ATTEMPTS:
+                    log.warning("submit_proposal retry due to low priority (attempt %s/%s, tip=%s): %s",
+                                attempt, MAX_ATTEMPTS, tip, msg)
+                    time.sleep((BACKOFF_MS * attempt) / 1000.0)
+                    last_err = e
+                    continue
+                log.exception("submit_proposal RPC failed: %s", e)
                 raise HTTPException(status_code=502, detail={
-                    "code": "dispatch_failed",
-                    "hint": "Check pallet event / error data; ensure types and param names match runtime",
-                    "receipt": str(getattr(receipt, "error_message", "")),
+                    "code": "rpc_submit_failed",
+                    "error": str(e),
+                    "hint": "Verify pallet/call/param names and signer funds",
                 })
-        except Exception:
-            pass
 
-        log.info("submit_proposal included: hash=%s", receipt.extrinsic_hash)
-        return {"ok": True, "hash": receipt.extrinsic_hash}
-    except SubstrateRequestException as e:
-        log.exception("submit_proposal RPC failed: %s", e)
         raise HTTPException(status_code=502, detail={
-            "code": "rpc_submit_failed",
-            "error": str(e),
-            "hint": "Verify pallet/call/param names and signer funds",
+            "code": "tx_priority_retries_exhausted",
+            "error": str(last_err) if last_err else "unknown",
         })
+
     except HTTPException:
         raise
     except Exception as e:
@@ -333,9 +374,22 @@ def submit_proposal(body: SubmitProposalBody):
 
 @router.post("/finalize-slot")
 def finalize_slot(body: FinalizeBody):
-    """Ask the PoBA pallet to finalize the given slot."""
+    """
+    Finalize a slot only if BestProposal[slot] exists and has matches>0.
+    Includes a small JSONDecodeError retry, as some nodes hiccup on inclusion waits.
+    """
     substrate = get_substrate()
     signer = get_signer()
+
+    # Guard: don't finalize a slot if there is no BestProposal with matches>0
+    try:
+        bp = substrate.query(_pallet_name(), "BestProposal", [int(body.slot)]).value
+    except Exception as e:
+        log.warning("finalize_slot: failed to query BestProposal for slot %s: %s", body.slot, e)
+        bp = None
+
+    if not bp or not (bp.get("matches") or []):
+        return {"ok": False, "skipped": True, "reason": "no_best_proposal_for_slot", "slot": body.slot}
 
     try:
         call = substrate.compose_call(
@@ -345,41 +399,33 @@ def finalize_slot(body: FinalizeBody):
         )
         extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
 
-        # נסיון ראשון: להמתין להכללה
         try:
-            receipt = substrate.submit_extrinsic(
-                extrinsic,
-                wait_for_inclusion=True,
-            )
+            receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
         except JSONDecodeError as e:
-            # טיפוסית נובע ממסגרת WS לא-JSON; ננסה שוב קצר
             log.warning("finalize_slot inclusion wait failed with JSONDecodeError: %s; retrying once", e)
             time.sleep(0.2)
             try:
-                receipt = substrate.submit_extrinsic(
-                    extrinsic,
-                    wait_for_inclusion=True,
-                )
+                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
             except JSONDecodeError as e2:
-                # fallback: בלי המתנה להכללה - מחזירים hash (האקסטרינזיק נשלח)
                 log.warning("finalize_slot: second inclusion wait failed (%s); sending without wait", e2)
-                receipt = substrate.submit_extrinsic(
-                    extrinsic,
-                    wait_for_inclusion=False,
-                )
+                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=False)
 
-        # בדיקת סטטוס אם יש
-        try:
-            if hasattr(receipt, "is_success") and not receipt.is_success:
-                raise HTTPException(status_code=502, detail={
-                    "code": "dispatch_failed",
-                    "hint": "Check pallet finalize error",
-                    "receipt": str(getattr(receipt, "error_message", "")),
-                })
-        except Exception:
-            pass
+        ok = getattr(receipt, "is_success", None)
+        log.info("finalize_slot included/sent: ok=%s hash=%s", ok, receipt.extrinsic_hash)
+        for ev in getattr(receipt, "triggered_events", []) or []:
+            try:
+                mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
+                log.info("finalize_slot event: %s::%s", mod, name)
+            except Exception:
+                pass
 
-        log.info("finalize_slot included/sent: hash=%s", receipt.extrinsic_hash)
+        if ok is False:
+            raise HTTPException(status_code=502, detail={
+                "code": "dispatch_failed",
+                "hint": "Check pallet finalize error",
+                "receipt": str(getattr(receipt, "error_message", "")),
+            })
+
         return {"ok": True, "hash": receipt.extrinsic_hash}
     except SubstrateRequestException as e:
         log.exception("finalize_slot RPC failed: %s", e)
@@ -396,39 +442,76 @@ def finalize_slot(body: FinalizeBody):
             "error": str(e),
         })
 
-# -------------------------------------------
-# Build proposal (IDA*) – computed in backend
-# -------------------------------------------
+
+# ------------------------------ Proposal builder (IDA*) ------------------------------
 
 @router.post("/build-proposal", response_model=BuildResp)
 def build_proposal(body: BuildBody) -> BuildResp:
     """
     Compute an assignment with IDA*.
-    We MAXIMIZE total_score and therefore keep scores POSITIVE (bigger = better).
-    Constraints:
-      - Offer min_price <= Request max_price (when request has a max)
-      - Each offer is used at most once
-      - We match up to n = min(|R|, |O|)
-    Score model (tunable):
-      penalty = ALPHA * (dist_km_start + dist_km_end) + BETA * (price_cents)
-      score   = max(0, BASE - penalty)     # POSITIVE
-      cost    = BASE - score  (for IDA*; or simply = penalty)
-    """
+    We MINIMIZE "cost" (penalty) and derive POSITIVE "score" for the on-chain total_score.
 
+    Constraints (per-pair feasibility):
+      - Price: offer.min_price_cents <= request.max_price_cents (0 means "no max")
+      - Time:   request window must overlap offer window (configurable, see env below)
+      - Distance caps (optional): max_start_km / max_end_km / max_total_km
+      - Each offer is used at most once
+      - We iterate requests in given order and may SKIP a request with a heavy penalty (to avoid dead-ends)
+
+    Cost model:
+      penalty = ALPHA * (d_start + d_end) + BETA * price_cents
+      (lower is better)
+    Score model (for chain, positive and additive):
+      score = max(0, BASE - penalty)
+
+    IMPORTANT: We add a heavy SKIP cost so the search prefers real matches when they exist.
+    """
     R = body.requests
     O = body.offers
-    n = min(len(R), len(O))
+    n = len(R)  # consider all requests; skipping is allowed with penalty
+    m = len(O)
 
-    # Precompute pair cost/score
-    INF = 10**9
-    cost = [[INF] * len(O) for _ in range(len(R))]
-    partial_score = [[0] * len(O) for _ in range(len(R))]
-    price_agreed = [[0] * len(O) for _ in range(len(R))]
+    # ---------------- Scoring parameters (tunable) ----------------
+    BASE  = int(os.getenv("POBA_BASE_SCORE", "1000000"))   # keep scores positive
+    ALPHA = float(os.getenv("POBA_ALPHA_PER_KM", "1000"))  # penalty per km
+    BETA  = float(os.getenv("POBA_BETA_PER_CENT", "1"))    # penalty per cent
 
-    # --- scoring params (you can tune them later) ---
-    BASE  = 1_000_000       # large base to keep scores positive
-    ALPHA = 1_000           # penalty per km (1 km = 1000 points)
-    BETA  = 1               # penalty per cent (1 cent = 1 point)
+    # Heavy penalty for skipping a request (so we prefer matching when possible)
+    SKIP_COST = int(os.getenv("POBA_SKIP_COST", "100000000"))  # default 1e8
+
+    # Optional pairwise distance caps (via request, or ENV fallback)
+    max_start_km = body.max_start_km if body.max_start_km is not None else (float(os.getenv("POBA_MAX_START_KM", "0")) or None)
+    max_end_km   = body.max_end_km   if body.max_end_km   is not None else (float(os.getenv("POBA_MAX_END_KM", "0")) or None)
+    max_total_km = body.max_total_km if body.max_total_km is not None else (float(os.getenv("POBA_MAX_TOTAL_KM", "0")) or None)
+
+    # ---------------- Time-overlap requirements (NEW) ----------------
+    # All values are interpreted in milliseconds (ms) since epoch (UTC)
+    REQUIRE_TIME_OVERLAP = os.getenv("POBA_REQUIRE_TIME_OVERLAP", "1").lower() not in {"0", "false", "no", ""}
+    MIN_OVERLAP_MS = int(float(os.getenv("POBA_MIN_OVERLAP_SEC", "0")) * 1000)
+    # Optional slack: allow an offer to start a bit earlier / end a bit later
+    EARLY_SLACK_MS = int(float(os.getenv("POBA_EARLY_SLACK_SEC", "0")) * 1000)
+    LATE_SLACK_MS  = int(float(os.getenv("POBA_LATE_SLACK_SEC", "0")) * 1000)
+
+    def intervals_overlap_ms(a_start: int, a_end: int, b_start: int, b_end: int,
+                             min_olap: int = 0, early_slack: int = 0, late_slack: int = 0) -> bool:
+        """
+        Check if [a_start, a_end] and [b_start, b_end] overlap at least `min_olap` ms,
+        allowing slack on the 'b' interval: b_start -= early_slack, b_end += late_slack.
+        All times are ms since epoch (UTC).
+        If any bound is missing/zero and overlap is required → return False.
+        """
+        if not (a_start and a_end and b_start and b_end):
+            return not REQUIRE_TIME_OVERLAP
+        b_s = b_start - early_slack
+        b_e = b_end + late_slack
+        overlap = min(a_end, b_e) - max(a_start, b_s)
+        return overlap >= max(0, min_olap)
+
+    # ---------------- Precompute pair cost/score ----------------
+    INF = 10**12  # sufficiently large
+    cost = [[INF] * m for _ in range(n)]
+    partial_score = [[0] * m for _ in range(n)]
+    price_agreed = [[0] * m for _ in range(n)]
 
     def haversine_km(lat1_e6: int, lon1_e6: int, lat2_e6: int, lon2_e6: int) -> float:
         to_rad = lambda x: (x / 1_000_000.0) * math.pi / 180.0
@@ -440,36 +523,71 @@ def build_proposal(body: BuildBody) -> BuildResp:
 
     for i, r in enumerate(R):
         for j, o in enumerate(O):
-            # price feasibility check (0 means "no max")
+            # ---- 1) Price feasibility (0 means "no max" on the request) ----
             if r.max_price_cents and o.min_price_cents > r.max_price_cents:
                 continue
+
+            # ---- 2) Time-window feasibility (NEW) ----
+            if REQUIRE_TIME_OVERLAP:
+                if not intervals_overlap_ms(
+                    r.window_start, r.window_end,
+                    o.window_start, o.window_end,
+                    min_olap=MIN_OVERLAP_MS,
+                    early_slack=EARLY_SLACK_MS,
+                    late_slack=LATE_SLACK_MS,
+                ):
+                    continue
+
+            # ---- 3) Distance feasibility ----
             d_start = haversine_km(r.from_lat, r.from_lon, o.from_lat, o.from_lon)
             d_end   = haversine_km(r.to_lat,   r.to_lon,   o.to_lat,   o.to_lon)
-            p_cents = max(int(o.min_price_cents), 100)
+            d_total = d_start + d_end
 
-            penalty = int(ALPHA * (d_start + d_end) + BETA * p_cents)
-            sc = max(0, BASE - penalty)  # POSITIVE score (bigger = better)
+            if max_start_km is not None and d_start > max_start_km:
+                continue
+            if max_end_km is not None and d_end > max_end_km:
+                continue
+            if max_total_km is not None and d_total > max_total_km:
+                continue
+
+            # ---- 4) Scoring ----
+            # Agreed price policy: use offer's min price (could be replaced with negotiation policy)
+            p_cents = max(int(o.min_price_cents), 100)
+            penalty = int(ALPHA * d_total + BETA * p_cents)  # minimize penalty
+            sc = max(0, BASE - penalty)                      # positive score (maximize on-chain)
 
             partial_score[i][j] = int(sc)
             price_agreed[i][j]  = p_cents
-            cost[i][j]          = BASE - sc  # equivalent to 'penalty'
+            cost[i][j]          = penalty
 
-    # --- IDA* state space: (i, used_mask, g) ---
-    from typing import Tuple as Tup, Iterable as _Iterable
+    # ---------------- IDA* state space ----------------
+    # State = (i, used_mask, g_cost)
+    # i: index of current request (0..n)
+    # used_mask: bitmask over offers (size m)
+    # g_cost: accumulated cost up to this state
+
+    from typing import Tuple as Tup, Iterable as _Iterable, Optional as _Optional
 
     def is_goal(state: Tup[int, int, int]) -> bool:
         i, used_mask, g = state
+        # We allow reaching i == n after matching OR penalized skipping
         return i == n
 
     def h(state: Tup[int, int, int]) -> float:
-        return 0.0  # admissible lower bound; can be improved
+        # Admissible lower bound: 0 (safe).
+        return 0.0
 
     def expand(state: Tup[int, int, int]) -> _Iterable[Tup[Tup[int, int, int], float]]:
         i, used_mask, g = state
         if i >= n:
             return []
         succ = []
-        for j in range(len(O)):
+
+        # Penalized "skip request i" (prevents getting stuck if early requests are impossible)
+        succ.append(((i + 1, used_mask, g + SKIP_COST), SKIP_COST))
+
+        # Try to match request i with any unused feasible offer j
+        for j in range(m):
             if (used_mask >> j) & 1:
                 continue
             c_ij = cost[i][j]
@@ -487,43 +605,59 @@ def build_proposal(body: BuildBody) -> BuildResp:
 
     matches: List[MatchItem] = []
     total_score = 0
+
     if goal is None:
         log.info("build_proposal: no feasible assignment (slot=%s)", body.slot)
         return BuildResp(slot=body.slot, total_score=0, matches=[])
 
-    # Greedy-consistent replay (with h=0 admissible)
+    # ---------------- Reconstruct one optimal plan ----------------
+    # With h=0, we can replay greedily: for each i, prefer any successor that keeps us within best_cost.
     i, used_mask, acc = 0, 0, 0
     while i < n:
-        chosen = None
-        for j in range(len(O)):
+        chosen_j: _Optional[int] = None
+
+        # Prefer a real match if possible (and still optimal)
+        for j in range(m):
             if (used_mask >> j) & 1:
                 continue
             c_ij = cost[i][j]
             if c_ij >= INF:
                 continue
             if acc + c_ij <= best_cost:
-                chosen = j
+                chosen_j = j
                 break
-        if chosen is None:
-            break
-        matches.append(MatchItem(
-            request_uuid=R[i].uuid_16,
-            offer_uuid=O[chosen].uuid_16,
-            agreed_price_cents=int(price_agreed[i][chosen]),
-            partial_score=int(partial_score[i][chosen]),
-        ))
-        total_score += int(partial_score[i][chosen])  # POSITIVE sum
-        used_mask |= (1 << chosen)
-        acc += int(cost[i][chosen])
-        i += 1
 
-    log.info("build_proposal: slot=%s total_score=%s matches=%s",
-             body.slot, total_score, len(matches))
+        if chosen_j is not None:
+            matches.append(MatchItem(
+                request_uuid=R[i].uuid_16,
+                offer_uuid=O[chosen_j].uuid_16,
+                agreed_price_cents=int(price_agreed[i][chosen_j]),
+                partial_score=int(partial_score[i][chosen_j]),
+            ))
+            total_score += int(partial_score[i][chosen_j])
+            used_mask |= (1 << chosen_j)
+            acc += int(cost[i][chosen_j])
+            i += 1
+            continue
+
+        # Otherwise we must have skipped this request in the optimal path
+        if acc + SKIP_COST <= best_cost:
+            acc += SKIP_COST
+            i += 1
+            continue
+
+        # Should not happen if best_cost is consistent; break to avoid infinite loop.
+        break
+
+    log.info(
+        "build_proposal: slot=%s total_score=%s matches=%s (skip_cost=%s, time_required=%s, min_overlap_ms=%s, early_slack_ms=%s, late_slack_ms=%s)",
+        body.slot, total_score, len(matches), SKIP_COST,
+        REQUIRE_TIME_OVERLAP, MIN_OVERLAP_MS, EARLY_SLACK_MS, LATE_SLACK_MS
+    )
     return BuildResp(slot=body.slot, total_score=total_score, matches=matches)
 
-# ---------------------------
-# Debug / Diagnostics helpers
-# ---------------------------
+
+# ------------------------------ Diagnostics ------------------------------
 
 @router.get("/chain-health")
 def chain_health():
@@ -586,3 +720,86 @@ def whoami():
     except Exception as e:
         out["balance_error"] = str(e)
     return out
+
+
+@router.post("/apply-proposal")
+def apply_proposal(
+    payload: SubmitProposalBody = Body(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Materialize a (built or finalized) proposal into the DB:
+    - Create assignments(request_id, driver_user_id, offer_id, status, assigned_at)
+    - Update requests.status='assigned'
+    - Update courier_offers.status='assigned'
+    This endpoint trusts the payload you pass (typically from /poba/build-proposal).
+    In production you may want to fetch the finalized proposal from chain instead.
+    """
+
+    matches = payload.matches or []
+    if not matches:
+        return {"ok": True, "created": 0, "updated_requests": 0, "updated_offers": 0}
+
+    created = 0
+    upd_r = 0
+    upd_o = 0
+
+    for m in matches:
+        try:
+            rq_uuid = _hex32_to_uuid(m.request_uuid)
+            of_uuid = _hex32_to_uuid(m.offer_uuid)
+        except Exception:
+            continue
+
+        # Resolve DB ids & driver_user_id
+        sel = text("""
+            SELECT
+                r.id::text AS request_id,
+                o.id::text AS offer_id,
+                o.driver_user_id::text AS driver_user_id
+            FROM requests r
+            JOIN courier_offers o ON o.id = :offer_id::uuid
+            WHERE r.id = :request_id::uuid
+            LIMIT 1
+        """)
+        row = db.execute(sel, {"request_id": str(rq_uuid), "offer_id": str(of_uuid)}).mappings().first()
+        if not row:
+            continue
+
+        request_id = row["request_id"]
+        offer_id = row["offer_id"]
+        driver_user_id = row["driver_user_id"]
+
+        # Idempotent guard: skip if an active assignment already exists for this request
+        exists = db.execute(
+            text("""SELECT 1 FROM assignments
+                    WHERE request_id = :rid
+                      AND status IN ('created','picked_up','in_transit')
+                    LIMIT 1"""),
+            {"rid": request_id},
+        ).first()
+        if exists:
+            continue
+
+        # Create assignment
+        ins = text("""
+            INSERT INTO assignments
+              (request_id, driver_user_id, offer_id, status, assigned_at)
+            VALUES
+              (:rid, :duid, :oid, 'created', NOW())
+            RETURNING id
+        """)
+        arow = db.execute(ins, {"rid": request_id, "duid": driver_user_id, "oid": offer_id}).mappings().first()
+        if arow:
+            created += 1
+
+        # Update request/offer statuses
+        db.execute(text("UPDATE requests SET status='assigned', updated_at=NOW() WHERE id=:rid"),
+                   {"rid": request_id})
+        upd_r += 1
+        db.execute(text("UPDATE courier_offers SET status='assigned', updated_at=NOW() WHERE id=:oid"),
+                   {"oid": offer_id})
+        upd_o += 1
+
+    db.commit()
+    return {"ok": True, "created": created, "updated_requests": upd_r, "updated_offers": upd_o}

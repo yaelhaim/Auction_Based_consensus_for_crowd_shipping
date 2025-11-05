@@ -4,7 +4,20 @@ from typing import Optional, List, Literal, Any
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+# FastAPI
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+
+
+try:
+    from .matching_auto import try_auto_match  # preferred location
+except Exception:
+    try:
+        from Backend.matching_auto import try_auto_match  # alternative layout
+    except Exception:
+        def try_auto_match() -> None:
+            """No-op fallback when auto-matching module isn't present."""
+            return
+
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -18,7 +31,10 @@ router = APIRouter(prefix="", tags=["offers"])
 # ---------- Helpers ----------
 
 def _get_user_id(user: Any) -> str:
-
+    """
+    Extracts the authenticated user's ID from the dependency payload.
+    Raises 401 in case the ID is missing.
+    """
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     if isinstance(user, dict):
@@ -63,14 +79,20 @@ async def create_offer(
     payload: OfferCreate,
     db: Session = Depends(get_db),
     user: Any = Depends(get_current_user),
+    background_tasks: BackgroundTasks = None,
 ):
+    """
+    Create a courier offer. After successful insert+commit we trigger a debounced
+    auto-matching pipeline (non-blocking). The trigger is safe to call even if
+    auto-matching is disabled by env; it'll no-op.
+    """
     user_id = _get_user_id(user)
 
-    # Validate window
+    # Validate time window
     if payload.window_end <= payload.window_start:
         raise HTTPException(400, "window_end must be after window_start")
 
-    # Server-side geocoding
+    # Server-side geocoding (mandatory for from_address; optional for to_address)
     src = geocode_address(payload.from_address)
     if src is None:
         raise HTTPException(400, "Could not geocode from_address")
@@ -130,6 +152,10 @@ async def create_offer(
     if not row:
         raise HTTPException(status_code=500, detail="Insert failed (no row)")
 
+    # Non-blocking, debounced auto-match trigger (safe if module/env disabled)
+    if background_tasks is not None:
+        background_tasks.add_task(try_auto_match)
+
     return {"id": str(row["id"]), "status": row["status"], "created_at": row["created_at"]}
 
 # ---------- GET /offers (list mine) ----------
@@ -143,8 +169,8 @@ async def list_my_offers(
     user: Any = Depends(get_current_user),
 ):
     """
-    מחזיר את ההצעות של הנהג המחובר (לפי JWT).
-    תואם לקריאה של האפליקציה: GET /offers?status=active&limit=...&offset=...
+    Returns offers of the authenticated driver (JWT).
+    Compatible with the app call: GET /offers?status=active&limit=...&offset=...
     """
     user_id = _get_user_id(user)
 
@@ -184,12 +210,12 @@ async def defer_push_for_offer(
     user: Any = Depends(get_current_user),
 ):
     """
-    שומר עיכוב פוש עבור ההצעה הזו: courier_offers.push_defer_until = now + seconds.
-    נשתמש בזה כדי *לא* לשלוח פוש לנהג בזמן שהוא על מסך ההמתנה.
+    Store a push defer for THIS offer: courier_offers.push_defer_until = now + seconds.
+    The mobile push layer should NOT send notifications if now < push_defer_until.
     """
     uid = _get_user_id(user)
 
-    # ודא שההצעה שייכת לנהג המחובר
+    # Ownership check
     sel = text("SELECT driver_user_id FROM courier_offers WHERE id = :oid")
     try:
         row = db.execute(sel, {"oid": offer_id}).mappings().first()

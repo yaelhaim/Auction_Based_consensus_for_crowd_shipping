@@ -1,18 +1,13 @@
 // app/matching-await.tsx
 // Waiting screen (sender/rider) with city-map background + white card + hourglass.
-// Server-first matching: try to create a REAL assignment once, then poll as fallback.
+// Read-only: NO local triggers. We rely solely on the chain/Backend to finalize matches.
 // We only show "matched" and enable CTA if we have a solid assignment_id.
 // Comments are in English; user-facing strings are in Hebrew.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  deferPushForRequest,
-  checkMatchStatus,
-  clearAuctions,
-  runMatchingForRequest, // NEW: server-side create attempt
-} from "../lib/api";
+import { deferPushForRequest, checkMatchStatus } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
 import Hourglass from "./components/Hourglass";
 
@@ -80,7 +75,7 @@ export default function MatchingAwait() {
     if (!requestId || !token) return;
 
     async function start() {
-      // Soft deadline for polling
+      // Soft deadline for polling (wait window + small grace)
       if (deadlineRef.current === null) {
         deadlineRef.current = Date.now() + DEFAULT_WAIT_MS + GRACE_MS;
       }
@@ -104,46 +99,13 @@ export default function MatchingAwait() {
         );
       }
 
-      // Trigger a clearing tick (IDA*) in the background
-      clearAuctions({ now_ts: Math.floor(Date.now() / 1000) })
-        .then((r: any) =>
-          console.log(
-            "[await] clearAuctions →",
-            r?.cleared,
-            r?.reason || "",
-            r?.debug_counts || {}
-          )
-        )
-        .catch((e: any) =>
-          console.log("[await] clearAuctions error:", e?.message || e)
-        );
-
-      // NEW: try to create a REAL assignment immediately (one-shot)
-      try {
-        const first = await runMatchingForRequest(
-          String(token),
-          String(requestId)
-        );
-        if (cancelled) return;
-        if (first.status === "matched" && solidAssignmentId(first)) {
-          setAssignmentId(solidAssignmentId(first));
-          setStatus("matched");
-          return; // no need to start the poll loop
-        }
-      } catch (e) {
-        console.log(
-          "[await] runMatchingForRequest error:",
-          (e as any)?.message || e
-        );
-      }
-
-      // Fallback: start polling match_status
+      // Fallback polling of authoritative server/chain status
       async function poll() {
         try {
           const res = await checkMatchStatus(String(token), String(requestId));
           if (cancelled) return;
 
-          // Log for debugging (can be muted later)
+          // Debug (can mute later)
           console.log("[await] poll payload:", JSON.stringify(res));
 
           if (res?.status === "matched") {
@@ -191,7 +153,6 @@ export default function MatchingAwait() {
     router.replace({ pathname: homePath as any, params: { token } });
   }
 
-  // Navigate to the assignment details screen. Require solid assignmentId.
   function openAssignment() {
     if (!assignmentId) return;
     router.replace({
@@ -205,7 +166,6 @@ export default function MatchingAwait() {
     });
   }
 
-  // CTA enabled only when we truly have a verified assignment id
   const ctaDisabled = !assignmentId;
 
   return (
@@ -238,7 +198,7 @@ export default function MatchingAwait() {
             <TouchableOpacity
               style={[S.cta, !assignmentId && { opacity: 0.6 }]}
               onPress={openAssignment}
-              disabled={!assignmentId}
+              disabled={ctaDisabled}
             >
               <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
             </TouchableOpacity>
