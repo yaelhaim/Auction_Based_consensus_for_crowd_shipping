@@ -2,22 +2,25 @@
 # - Pull open requests/offers from DB
 # - Build a proposal (IDA*) with distance+price cost model
 # - Submit proposal & finalize slot on a Substrate chain (with priority-aware retry)
-# - Optionally apply proposal into DB assignments
+# - Optionally apply proposal into DB assignments (auto after finalize or manual endpoint)
 #
 # Notes:
 # * Includes a penalized "skip" so IDA* won’t stall on the first request.
-# * submit_proposal now retries with increasing tip to overcome "Priority is too low (1014)".
+# * submit_proposal/finalize_slot can now wait for FINALIZATION (not just inclusion) via POBA_WAIT_FINALIZATION=1.
+# * Both chain calls retry with increasing tip to overcome "Priority is too low (1014)".
 
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Tuple, Annotated, Iterable, Optional
 from uuid import UUID
 import os, logging, math
+from datetime import timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .Database.db import get_db
+from .Database.db import SessionLocal  # for auto-apply inside finalize
 from .models import Request, CourierOffer
 
 from substrateinterface import SubstrateInterface, Keypair
@@ -57,6 +60,13 @@ def _call_finalize() -> str:
 def _param_matches() -> str:
     # Some chains use "matches", others "match_items" – make it configurable.
     return os.getenv("POBA_PARAM_MATCHES", "matches")
+
+def _wait_for_finalization() -> bool:
+    return os.getenv("POBA_WAIT_FINALIZATION", "0").lower() in {"1", "true", "yes"}
+
+def _finalization_timeout_sec() -> int:
+    # kept only for debug visibility; not passed to substrate.submit_extrinsic
+    return int(os.getenv("POBA_FINALIZATION_TIMEOUT_SEC", "60"))
 
 
 # ------------------------------ Types & utils ------------------------------
@@ -259,18 +269,133 @@ def offers_open_compat(db: Session = Depends(get_db)) -> List[MarketOffer]:
     return _offers_active_impl(db)
 
 
+# ------------------------------ Internal DB apply helper ------------------------------
+
+def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
+    """
+    Shared logic to materialize matches into DB:
+    - Create assignments
+    - Update requests.status='assigned'
+    - Update courier_offers.status='assigned'
+    """
+    if not matches:
+        return {"ok": True, "created": 0, "updated_requests": 0, "updated_offers": 0}
+
+    created = 0
+    upd_r = 0
+    upd_o = 0
+
+    for m in matches:
+        try:
+            rq_uuid = _hex32_to_uuid(m.request_uuid)
+            of_uuid = _hex32_to_uuid(m.offer_uuid)
+        except Exception:
+            continue
+
+        # ✅ fix: CAST(:param AS uuid) instead of :param::uuid
+        sel = text("""
+            SELECT
+                r.id::text AS request_id,
+                o.id::text AS offer_id,
+                o.driver_user_id::text AS driver_user_id
+            FROM requests r
+            JOIN courier_offers o ON o.id = CAST(:offer_id AS uuid)
+            WHERE r.id = CAST(:request_id AS uuid)
+            LIMIT 1
+        """)
+        row = db.execute(sel, {"request_id": str(rq_uuid), "offer_id": str(of_uuid)}).mappings().first()
+        if not row:
+            continue
+
+        request_id = row["request_id"]
+        offer_id = row["offer_id"]
+        driver_user_id = row["driver_user_id"]
+
+        exists = db.execute(
+            text("""SELECT 1 FROM assignments
+                    WHERE request_id = CAST(:rid AS uuid)
+                      AND status IN ('created','picked_up','in_transit')
+                    LIMIT 1"""),
+            {"rid": request_id},
+        ).first()
+        if exists:
+            continue
+
+        ins = text("""
+            INSERT INTO assignments
+              (request_id, driver_user_id, offer_id, status, assigned_at)
+            VALUES
+              (CAST(:rid AS uuid), CAST(:duid AS uuid), CAST(:oid AS uuid), 'created', NOW())
+            RETURNING id
+        """)
+        arow = db.execute(ins, {"rid": request_id, "duid": driver_user_id, "oid": offer_id}).mappings().first()
+        if arow:
+            created += 1
+
+        db.execute(
+            text("UPDATE requests SET status='assigned', updated_at=NOW() WHERE id = CAST(:rid AS uuid)"),
+            {"rid": request_id}
+        )
+        upd_r += 1
+        db.execute(
+            text("UPDATE courier_offers SET status='assigned', updated_at=NOW() WHERE id = CAST(:oid AS uuid)"),
+            {"oid": offer_id}
+        )
+        upd_o += 1
+
+    db.commit()
+    return {"ok": True, "created": created, "updated_requests": upd_r, "updated_offers": upd_o}
+
+
 # ------------------------------ Chain calls ------------------------------
+
+def _submit_with_wait(substrate, extrinsic, *, label: str):
+    """
+    Helper to submit extrinsic and wait according to env flags.
+    Waits for finalization if POBA_WAIT_FINALIZATION=1, otherwise for inclusion.
+    Does NOT use unsupported 'timeout' argument (compatible with older substrate-interface).
+    Falls back gracefully from finalization→inclusion and retries JSONDecodeError once.
+    """
+    wait_final = _wait_for_finalization()
+
+    if wait_final:
+        try:
+            return substrate.submit_extrinsic(
+                extrinsic,
+                wait_for_finalization=True
+            )
+        except (JSONDecodeError, SubstrateRequestException) as e:
+            log.warning("%s: finalization wait failed (%s), falling back to inclusion", label, e)
+
+    # Fallback: inclusion (default behavior)
+    try:
+        return substrate.submit_extrinsic(
+            extrinsic,
+            wait_for_inclusion=True
+        )
+    except JSONDecodeError as e:
+        # Known hiccup: retry once; if fails again, send without wait
+        log.warning("%s inclusion wait JSONDecodeError: %s; retrying once", label, e)
+        time.sleep(0.2)
+        try:
+            return substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+        except JSONDecodeError as e2:
+            log.warning("%s: second inclusion wait failed (%s); sending without wait", label, e2)
+            return substrate.submit_extrinsic(extrinsic, wait_for_inclusion=False)
 
 @router.post("/submit-proposal")
 def submit_proposal(body: SubmitProposalBody):
     """
     Submit (or improve) the best proposal for a slot to the PoBA pallet.
     Now includes retry with increasing `tip` to overcome 1014 "Priority is too low".
+    Also supports waiting for FINALIZATION via POBA_WAIT_FINALIZATION=1.
     Tunables via env:
       POBA_TX_MAX_ATTEMPTS (default 3)
       POBA_TX_TIP_BASE     (default 0)
       POBA_TX_TIP_STEP     (default 1000)
       POBA_TX_BACKOFF_MS   (default 150)
+      POBA_WAIT_FINALIZATION (default 0)
+      POBA_FINALIZATION_TIMEOUT_SEC (default 60)  # informational only in this build
     """
     substrate = get_substrate()
     signer = get_signer()
@@ -309,7 +434,7 @@ def submit_proposal(body: SubmitProposalBody):
             },
         )
 
-        # ---- NEW: priority-aware retry with increasing tip ----
+        # ---- priority-aware retry with increasing tip ----
         MAX_ATTEMPTS = int(os.getenv("POBA_TX_MAX_ATTEMPTS", "3"))
         BASE_TIP     = int(os.getenv("POBA_TX_TIP_BASE", "0"))
         TIP_STEP     = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
@@ -321,9 +446,9 @@ def submit_proposal(body: SubmitProposalBody):
             extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer, tip=tip)
 
             try:
-                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+                receipt = _submit_with_wait(substrate, extrinsic, label="submit_proposal")
                 ok = getattr(receipt, "is_success", None)
-                log.info("submit_proposal included: ok=%s hash=%s tip=%s", ok, receipt.extrinsic_hash, tip)
+                log.info("submit_proposal included/finalized: ok=%s hash=%s tip=%s", ok, receipt.extrinsic_hash, tip)
                 for ev in getattr(receipt, "triggered_events", []) or []:
                     try:
                         mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
@@ -332,7 +457,6 @@ def submit_proposal(body: SubmitProposalBody):
                         pass
 
                 if ok is False:
-                    # Non-priority failure -> bubble up immediately
                     raise HTTPException(status_code=502, detail={
                         "code": "dispatch_failed",
                         "hint": "Check pallet event / error data; ensure types and param names match runtime",
@@ -376,7 +500,8 @@ def submit_proposal(body: SubmitProposalBody):
 def finalize_slot(body: FinalizeBody):
     """
     Finalize a slot only if BestProposal[slot] exists and has matches>0.
-    Includes a small JSONDecodeError retry, as some nodes hiccup on inclusion waits.
+    Includes priority-aware retry with tip, and can wait for FINALIZATION (POBA_WAIT_FINALIZATION=1).
+    Optionally applies the finalized matches into DB automatically when BID_AUTO_APPLY=1.
     """
     substrate = get_substrate()
     signer = get_signer()
@@ -397,21 +522,40 @@ def finalize_slot(body: FinalizeBody):
             call_function=_call_finalize(),
             call_params={"slot": int(body.slot)},
         )
-        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
 
-        try:
-            receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        except JSONDecodeError as e:
-            log.warning("finalize_slot inclusion wait failed with JSONDecodeError: %s; retrying once", e)
-            time.sleep(0.2)
+        # ---- priority-aware retry with increasing tip ----
+        MAX_ATTEMPTS = int(os.getenv("POBA_TX_MAX_ATTEMPTS", "3"))
+        BASE_TIP     = int(os.getenv("POBA_TX_TIP_BASE", "0"))
+        TIP_STEP     = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
+        BACKOFF_MS   = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
+
+        receipt = None
+        last_err: Optional[Exception] = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            tip = BASE_TIP + (attempt - 1) * TIP_STEP
+            extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer, tip=tip)
             try:
-                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-            except JSONDecodeError as e2:
-                log.warning("finalize_slot: second inclusion wait failed (%s); sending without wait", e2)
-                receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=False)
+                receipt = _submit_with_wait(substrate, extrinsic, label="finalize_slot")
+                break
+            except SubstrateRequestException as e:
+                msg = str(getattr(e, "args", [""])[0]) or str(e)
+                is_priority_low = ("Priority is too low" in msg) or ("'code': 1014" in msg) or ('"code": 1014' in msg)
+                if is_priority_low and attempt < MAX_ATTEMPTS:
+                    log.warning("finalize_slot retry due to low priority (attempt %s/%s, tip=%s): %s",
+                                attempt, MAX_ATTEMPTS, tip, msg)
+                    time.sleep((BACKOFF_MS * attempt) / 1000.0)
+                    last_err = e
+                    continue
+                raise
+
+        if receipt is None:
+            raise HTTPException(status_code=502, detail={
+                "code": "rpc_finalize_failed",
+                "error": str(last_err) if last_err else "unknown",
+            })
 
         ok = getattr(receipt, "is_success", None)
-        log.info("finalize_slot included/sent: ok=%s hash=%s", ok, receipt.extrinsic_hash)
+        log.info("finalize_slot included/finalized: ok=%s hash=%s", ok, receipt.extrinsic_hash)
         for ev in getattr(receipt, "triggered_events", []) or []:
             try:
                 mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
@@ -426,7 +570,41 @@ def finalize_slot(body: FinalizeBody):
                 "receipt": str(getattr(receipt, "error_message", "")),
             })
 
-        return {"ok": True, "hash": receipt.extrinsic_hash}
+        # ---- Auto-apply matches into DB after finalize (optional) ----
+        auto_apply = os.getenv("BID_AUTO_APPLY", "0").lower() in {"1", "true", "yes"}
+        applied = None
+        if auto_apply:
+            try:
+                # Query BestProposal right after finalize
+                bp2 = substrate.query(_pallet_name(), "BestProposal", [int(body.slot)]).value
+                items = (bp2 or {}).get("matches") or []
+                matches: List[MatchItem] = []
+                for it in items:
+                    # it = (req_u8[16], off_u8[16], price_cents, partial_score)
+                    try:
+                        rq_hex = bytes(it[0]).hex()
+                    except Exception:
+                        rq_hex = "".join(f"{b:02x}" for b in it[0])
+                    try:
+                        of_hex = bytes(it[1]).hex()
+                    except Exception:
+                        of_hex = "".join(f"{b:02x}" for b in it[1])
+                    matches.append(MatchItem(
+                        request_uuid=rq_hex,
+                        offer_uuid=of_hex,
+                        agreed_price_cents=int(it[2]),
+                        partial_score=int(it[3]),
+                    ))
+                if matches:
+                    db = SessionLocal()
+                    try:
+                        applied = _apply_matches_to_db(matches, db)
+                    finally:
+                        db.close()
+            except Exception as e:
+                log.warning("auto-apply after finalize failed: %s", e)
+
+        return {"ok": True, "hash": receipt.extrinsic_hash, "auto_applied": applied}
     except SubstrateRequestException as e:
         log.exception("finalize_slot RPC failed: %s", e)
         raise HTTPException(status_code=502, detail={
@@ -484,7 +662,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
     max_end_km   = body.max_end_km   if body.max_end_km   is not None else (float(os.getenv("POBA_MAX_END_KM", "0")) or None)
     max_total_km = body.max_total_km if body.max_total_km is not None else (float(os.getenv("POBA_MAX_TOTAL_KM", "0")) or None)
 
-    # ---------------- Time-overlap requirements (NEW) ----------------
+    # ---------------- Time-overlap requirements ----------------
     # All values are interpreted in milliseconds (ms) since epoch (UTC)
     REQUIRE_TIME_OVERLAP = os.getenv("POBA_REQUIRE_TIME_OVERLAP", "1").lower() not in {"0", "false", "no", ""}
     MIN_OVERLAP_MS = int(float(os.getenv("POBA_MIN_OVERLAP_SEC", "0")) * 1000)
@@ -523,11 +701,11 @@ def build_proposal(body: BuildBody) -> BuildResp:
 
     for i, r in enumerate(R):
         for j, o in enumerate(O):
-            # ---- 1) Price feasibility (0 means "no max" on the request) ----
+            # 1) Price feasibility (0 means "no max" on the request)
             if r.max_price_cents and o.min_price_cents > r.max_price_cents:
                 continue
 
-            # ---- 2) Time-window feasibility (NEW) ----
+            # 2) Time-window feasibility
             if REQUIRE_TIME_OVERLAP:
                 if not intervals_overlap_ms(
                     r.window_start, r.window_end,
@@ -538,7 +716,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
                 ):
                     continue
 
-            # ---- 3) Distance feasibility ----
+            # 3) Distance feasibility
             d_start = haversine_km(r.from_lat, r.from_lon, o.from_lat, o.from_lon)
             d_end   = haversine_km(r.to_lat,   r.to_lon,   o.to_lat,   o.to_lon)
             d_total = d_start + d_end
@@ -550,7 +728,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
             if max_total_km is not None and d_total > max_total_km:
                 continue
 
-            # ---- 4) Scoring ----
+            # 4) Scoring
             # Agreed price policy: use offer's min price (could be replaced with negotiation policy)
             p_cents = max(int(o.min_price_cents), 100)
             penalty = int(ALPHA * d_total + BETA * p_cents)  # minimize penalty
@@ -693,6 +871,9 @@ def debug_config():
         "signer_uri_present": bool(os.getenv("SUBSTRATE_SIGNER_URI")),
         "signer_mnemonic_present": bool(os.getenv("SUBSTRATE_SIGNER_MNEMONIC")),
         "signer_source": "URI" if os.getenv("SUBSTRATE_SIGNER_URI") else ("MNEMONIC" if os.getenv("SUBSTRATE_SIGNER_MNEMONIC") else "NONE"),
+        "wait_for_finalization": _wait_for_finalization(),
+        "finalization_timeout_sec": _finalization_timeout_sec(),
+        "auto_apply": os.getenv("BID_AUTO_APPLY", "0"),
     }
 
 @router.get("/whoami")
@@ -722,6 +903,8 @@ def whoami():
     return out
 
 
+# ------------------------------ Apply endpoints ------------------------------
+
 @router.post("/apply-proposal")
 def apply_proposal(
     payload: SubmitProposalBody = Body(...),
@@ -735,71 +918,27 @@ def apply_proposal(
     This endpoint trusts the payload you pass (typically from /poba/build-proposal).
     In production you may want to fetch the finalized proposal from chain instead.
     """
+    return _apply_matches_to_db(payload.matches or [], db)
 
-    matches = payload.matches or []
-    if not matches:
-        return {"ok": True, "created": 0, "updated_requests": 0, "updated_offers": 0}
+@router.post("/finalize-and-apply")
+def finalize_and_apply(
+    payload: SubmitProposalBody = Body(...),
+):
+    """
+    Convenience endpoint:
+    1) finalize-slot on chain (waits for finalization if POBA_WAIT_FINALIZATION=1)
+    2) apply the same matches to DB immediately
+    """
+    # 1) finalize on chain
+    fin = finalize_slot(FinalizeBody(slot=payload.slot))
+    if not fin or not fin.get("ok"):
+        return {"ok": False, "where": "finalize", "resp": fin}
 
-    created = 0
-    upd_r = 0
-    upd_o = 0
+    # 2) apply into DB
+    db = SessionLocal()
+    try:
+        applied = _apply_matches_to_db(payload.matches or [], db)
+    finally:
+        db.close()
 
-    for m in matches:
-        try:
-            rq_uuid = _hex32_to_uuid(m.request_uuid)
-            of_uuid = _hex32_to_uuid(m.offer_uuid)
-        except Exception:
-            continue
-
-        # Resolve DB ids & driver_user_id
-        sel = text("""
-            SELECT
-                r.id::text AS request_id,
-                o.id::text AS offer_id,
-                o.driver_user_id::text AS driver_user_id
-            FROM requests r
-            JOIN courier_offers o ON o.id = :offer_id::uuid
-            WHERE r.id = :request_id::uuid
-            LIMIT 1
-        """)
-        row = db.execute(sel, {"request_id": str(rq_uuid), "offer_id": str(of_uuid)}).mappings().first()
-        if not row:
-            continue
-
-        request_id = row["request_id"]
-        offer_id = row["offer_id"]
-        driver_user_id = row["driver_user_id"]
-
-        # Idempotent guard: skip if an active assignment already exists for this request
-        exists = db.execute(
-            text("""SELECT 1 FROM assignments
-                    WHERE request_id = :rid
-                      AND status IN ('created','picked_up','in_transit')
-                    LIMIT 1"""),
-            {"rid": request_id},
-        ).first()
-        if exists:
-            continue
-
-        # Create assignment
-        ins = text("""
-            INSERT INTO assignments
-              (request_id, driver_user_id, offer_id, status, assigned_at)
-            VALUES
-              (:rid, :duid, :oid, 'created', NOW())
-            RETURNING id
-        """)
-        arow = db.execute(ins, {"rid": request_id, "duid": driver_user_id, "oid": offer_id}).mappings().first()
-        if arow:
-            created += 1
-
-        # Update request/offer statuses
-        db.execute(text("UPDATE requests SET status='assigned', updated_at=NOW() WHERE id=:rid"),
-                   {"rid": request_id})
-        upd_r += 1
-        db.execute(text("UPDATE courier_offers SET status='assigned', updated_at=NOW() WHERE id=:oid"),
-                   {"oid": offer_id})
-        upd_o += 1
-
-    db.commit()
-    return {"ok": True, "created": created, "updated_requests": upd_r, "updated_offers": upd_o}
+    return {"ok": True, "finalize": fin, "apply": applied}
