@@ -1,11 +1,18 @@
-// app/bucket_list.tsx
-// One generic "bucket list" screen that serves Sender, Rider, and Courier.
-// It reads `role`, `bucket`, and `token` from route params and fetches
-// the right dataset. UI strings are in Hebrew; code comments in English.
+// Bucket list screen (Sender / Rider / Courier) — RTL-safe arrows/times.
+// Comments in English only. User-facing strings in Hebrew.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, FlatList, RefreshControl, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  ActivityIndicator,
+  SafeAreaView,
+} from "react-native";
 import { useLocalSearchParams } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import {
   listSenderRequests,
   listRiderRequests,
@@ -16,7 +23,6 @@ import {
   type CourierJobRow,
   type CourierOfferRow,
 } from "../lib/api";
-import { ListCard } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 
 type RoleKey = "sender" | "rider" | "courier";
@@ -27,22 +33,108 @@ type CourierBucket = "available" | "active" | "delivered";
 type Params = {
   token?: string;
   role?: RoleKey;
-  bucket?: string; // we'll validate at runtime
-  title?: string; // optional override for header
+  bucket?: string;
+  title?: string;
 };
+
+/* ---------------- helpers: pick + date/time + RTL-safe text ---------------- */
+
+// Force LTR segments inside RTL (dates, times, arrows)
+const LRM = "\u200E";
+const ltr = (seg: string) => `${LRM}${seg}${LRM}`;
+const arrow = (from: string, to: string) => `${from} ${ltr("→")} ${to}`;
+
+const fmt2 = (n: number) => String(n).padStart(2, "0");
+function fmtDate(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${fmt2(d.getDate())}.${fmt2(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+function fmtTime(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${fmt2(d.getHours())}:${fmt2(d.getMinutes())}`;
+}
+
+// Range text only (without the word "חלון")
+function windowRangeText(s?: string | null, e?: string | null) {
+  if (s && e) {
+    const same = fmtDate(s) === fmtDate(e);
+    const startSeg = `${fmtDate(s)} ${fmtTime(s)}`;
+    const endSeg = `${fmtDate(e)} ${fmtTime(e)}`;
+    return same
+      ? `${ltr(startSeg)}${ltr("–")}${ltr(fmtTime(e))}`
+      : `${ltr(startSeg)} ${ltr("→")} ${ltr(endSeg)}`;
+  }
+  if (s) return ltr(`${fmtDate(s)} ${fmtTime(s)}`);
+  if (e) return ltr(`${fmtDate(e)} ${fmtTime(e)}`);
+  return "—";
+}
+
+// Safe pick from multiple possible keys; supports deep paths with dots
+function pickAny(obj: any, keys: string[]): any {
+  for (const k of keys) {
+    const parts = k.split(".");
+    let cur: any = obj;
+    let ok = true;
+    for (const p of parts) {
+      if (cur && typeof cur === "object" && p in cur) cur = cur[p];
+      else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && cur != null) return cur;
+  }
+  return null;
+}
+
+// Status labels (Hebrew)
+function statusLabelSender(s: RequestRow["status"]) {
+  return s === "open"
+    ? "פתוחה"
+    : s === "assigned"
+      ? "שובץ שליח"
+      : s === "in_transit"
+        ? "בדרך"
+        : s === "completed"
+          ? "הושלם"
+          : "בוטל";
+}
+function statusLabelRider(s: RiderRequestRow["status"]) {
+  return s === "open"
+    ? "פתוחה"
+    : s === "assigned"
+      ? "שובץ נהג"
+      : s === "in_transit"
+        ? "בדרך"
+        : s === "completed"
+          ? "הושלם"
+          : "בוטל";
+}
+function statusLabelCourier(s: CourierJobRow["status"]) {
+  return s === "open"
+    ? "פתוח"
+    : s === "assigned"
+      ? "שובצת"
+      : s === "in_transit"
+        ? "בדרך"
+        : s === "completed"
+          ? "הושלם"
+          : "בוטל";
+}
+
+/* ---------------- main screen ---------------- */
 
 export default function BucketListScreen() {
   const { token, role, bucket, title } = useLocalSearchParams<Params>();
-
   const roleKey = (role as RoleKey) ?? "sender";
   const bucketKey = (bucket as string) ?? "open";
 
-  // Shared list state – we keep it as `any[]` and render per kind.
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Human title for the screen
   const screenTitle = useMemo(() => {
     if (title) return title;
     if (roleKey === "sender") {
@@ -59,7 +151,6 @@ export default function BucketListScreen() {
           ? "בקשות פעילות"
           : "בקשות שהושלמו";
     }
-    // courier
     return bucketKey === "available"
       ? "זמינויות"
       : bucketKey === "active"
@@ -67,7 +158,6 @@ export default function BucketListScreen() {
         : "משימות שהושלמו";
   }, [roleKey, bucketKey, title]);
 
-  // Fetcher that depends on role + bucket
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -77,9 +167,7 @@ export default function BucketListScreen() {
           String(token),
           bucketKey as SenderBucket
         );
-        // Keep only "package" for sender as you prefer
-        const filtered = (rows ?? []).filter((r: any) => r?.type !== "ride");
-        setItems(filtered);
+        setItems((rows ?? []).filter((r: any) => r?.type !== "ride"));
         return;
       }
       if (roleKey === "rider") {
@@ -92,7 +180,6 @@ export default function BucketListScreen() {
         setItems(rows ?? []);
         return;
       }
-      // courier
       if (bucketKey === "available") {
         const rows = await listMyCourierOffers(String(token), {
           status: "active",
@@ -122,175 +209,363 @@ export default function BucketListScreen() {
     setRefreshing(false);
   }, [load]);
 
-  // Per-role renderer
   const renderItem = useCallback(
     ({ item }: { item: any }) => {
       if (roleKey === "courier") {
-        // Two shapes: Offer (available) vs Job (active/delivered)
-        if (bucketKey === "available") {
-          const it = item as CourierOfferRow;
-          const title = `${it.from_address} → ${it.to_address || "כל יעד"}`;
-          const subtitle = `${offerRange(
-            it.window_start,
-            it.window_end
-          )} • סטטוס: ${it.status} • סוגים: ${Array.isArray(it.types) ? it.types.join(", ") : ""}`;
-          return (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-              <ListCard title={title} subtitle={subtitle} tone="primary" />
-            </View>
-          );
-        } else {
-          const it = item as CourierJobRow;
-          const title = `${it.from_address} → ${it.to_address}`;
-          const subtitle = `${fmtWindow(it.window_start, it.window_end)} • ${statusLabelCourier(it.status)} • ${
-            it.type === "package" ? "חבילה" : "טרמפ"
-          }`;
-          return (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-              <ListCard title={title} subtitle={subtitle} tone="primary" />
-            </View>
-          );
-        }
+        if (bucketKey === "available")
+          return <OfferCard it={item as CourierOfferRow} />;
+        return <CourierJobCard it={item as CourierJobRow} />;
       }
-
-      if (roleKey === "rider") {
-        const it = item as RiderRequestRow;
-        const title = `${it.from_address} → ${it.to_address}`;
-        const subtitle = `${fmtWindow(it.window_start, it.window_end)} • ${statusLabelRider(it.status)} • טרמפ`;
-        return (
-          <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-            <ListCard title={title} subtitle={subtitle} tone="primary" />
-          </View>
-        );
-      }
-
-      // sender
-      const it = item as RequestRow;
-      const title = `${it.from_address} → ${it.to_address}`;
-      const subtitle = `${fmtWindow(it.window_start, it.window_end)} • ${statusLabelSender(it.status)} • ${
-        it.type === "package" ? "חבילה" : "טרמפ"
-      }`;
-      return (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-          <ListCard title={title} subtitle={subtitle} tone="primary" />
-        </View>
-      );
+      if (roleKey === "rider")
+        return <RiderCard it={item as RiderRequestRow} />;
+      return <SenderCard it={item as RequestRow} />;
     },
     [roleKey, bucketKey]
   );
 
   return (
-    <View style={S.screen}>
-      <Text style={S.header}>{screenTitle}</Text>
-      <FlatList
-        data={items}
-        keyExtractor={(it: any) => it.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        renderItem={renderItem}
-        ListEmptyComponent={
-          <Text style={S.empty}>{loading ? "טוען…" : "אין פריטים להצגה"}</Text>
-        }
-        contentContainerStyle={{ paddingBottom: 12 }}
-      />
+    <LinearGradient
+      colors={[COLORS.green1, COLORS.green2, COLORS.green3, COLORS.green4]}
+      start={{ x: 1, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={{ flex: 1 }}
+    >
+      <SafeAreaView style={S.safe}>
+        <Text style={S.header}>{screenTitle}</Text>
+
+        {loading && items.length === 0 ? (
+          <View style={S.loadingBox}>
+            <ActivityIndicator color={COLORS.primaryDark} />
+            <Text style={S.loadingTxt}>טוען…</Text>
+          </View>
+        ) : null}
+
+        <FlatList
+          data={items}
+          keyExtractor={(it: any) => String(it.id)}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          renderItem={renderItem}
+          ListEmptyComponent={
+            !loading ? <Text style={S.empty}>אין פריטים להצגה</Text> : null
+          }
+          contentContainerStyle={{ paddingBottom: 24 }}
+        />
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+/* ---------------- cards per role ---------------- */
+
+function SenderCard({ it }: { it: RequestRow }) {
+  const status = statusLabelSender(it.status);
+  const win = windowRangeText(it.window_start, it.window_end);
+
+  const driverName =
+    pickAny(it, [
+      "driver_name",
+      "driver_full_name",
+      "courier_name",
+      "courier_full_name",
+    ]) ?? pickAny(it, ["assignment.driver.full_name"]);
+  const senderName = pickAny(it, ["sender_name", "requester_name"]);
+  const riderName = pickAny(it, ["rider_name"]);
+  const price = pickAny(it, [
+    "agreed_price",
+    "price",
+    "max_price",
+    "min_price",
+  ]);
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.card}>
+        <Text style={S.title}>{arrow(it.from_address, it.to_address)}</Text>
+
+        <View style={S.row}>
+          <View style={S.rightRow}>
+            <View style={S.chip}>
+              <Text style={S.chipTxt}>{status}</Text>
+            </View>
+            <Text style={S.windowLabel}>חלון</Text>
+          </View>
+          <Text style={S.meta}>{win}</Text>
+        </View>
+
+        <Line label="סוג" value={it.type === "package" ? "חבילה" : "טרמפ"} />
+        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        {driverName ? <Line label="שליח" value={String(driverName)} /> : null}
+        {senderName ? <Line label="שולח" value={String(senderName)} /> : null}
+        {riderName ? <Line label="נוסע" value={String(riderName)} /> : null}
+        {it?.notes ? (
+          <Line label="הערות" value={String(it.notes)} multi />
+        ) : null}
+      </View>
     </View>
   );
 }
 
-/* ---------------- helpers (shared) ---------------- */
+function RiderCard({ it }: { it: RiderRequestRow }) {
+  const status = statusLabelRider(it.status);
+  const win = windowRangeText(it.window_start, it.window_end);
+  const price = pickAny(it, [
+    "agreed_price",
+    "price",
+    "max_price",
+    "min_price",
+  ]);
+  const driverName = pickAny(it, [
+    "driver_name",
+    "driver_full_name",
+    "assignment.driver.full_name",
+  ]);
+  const riderName = pickAny(it, ["rider_name"]);
 
-// Sender statuses
-function statusLabelSender(s: RequestRow["status"]) {
-  return s === "open"
-    ? "פתוחה"
-    : s === "assigned"
-      ? "שובץ שליח"
-      : s === "in_transit"
-        ? "בדרך"
-        : s === "completed"
-          ? "הושלם"
-          : "בוטל";
+  return (
+    <View style={S.wrap}>
+      <View style={S.card}>
+        <Text style={S.title}>{arrow(it.from_address, it.to_address)}</Text>
+
+        <View style={S.row}>
+          <View style={S.rightRow}>
+            <View style={S.chip}>
+              <Text style={S.chipTxt}>{status}</Text>
+            </View>
+            <Text style={S.windowLabel}>חלון</Text>
+          </View>
+          <Text style={S.meta}>{win}</Text>
+        </View>
+
+        <Line label="סוג" value="טרמפ" />
+        <Line
+          label="נוסעים"
+          value={it?.passengers != null ? String(it.passengers) : "—"}
+        />
+        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        {driverName ? <Line label="נהג" value={String(driverName)} /> : null}
+        {riderName ? <Line label="נוסע" value={String(riderName)} /> : null}
+        {it?.notes ? (
+          <Line label="הערות" value={String(it.notes)} multi />
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
-// Rider statuses
-function statusLabelRider(s: RiderRequestRow["status"]) {
-  return s === "open"
-    ? "פתוחה"
-    : s === "assigned"
-      ? "שובץ נהג"
-      : s === "in_transit"
-        ? "בדרך"
-        : s === "completed"
-          ? "הושלם"
-          : "בוטל";
+function CourierJobCard({ it }: { it: CourierJobRow }) {
+  const status = statusLabelCourier(it.status);
+  const win = windowRangeText(it.window_start, it.window_end);
+  const price = pickAny(it, [
+    "agreed_price",
+    "price",
+    "suggested_pay",
+    "min_price",
+    "max_price",
+  ]);
+  const driverName = pickAny(it, [
+    "courier_name",
+    "driver_name",
+    "driver_full_name",
+    "assignment.driver.full_name",
+  ]);
+  const customerName = pickAny(it, [
+    "customer_name",
+    "sender_name",
+    "rider_name",
+  ]);
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.card}>
+        <Text style={S.title}>{arrow(it.from_address, it.to_address)}</Text>
+
+        <View style={S.row}>
+          <View style={S.rightRow}>
+            <View style={S.chip}>
+              <Text style={S.chipTxt}>{status}</Text>
+            </View>
+            <Text style={S.windowLabel}>חלון</Text>
+          </View>
+          <Text style={S.meta}>{win}</Text>
+        </View>
+
+        <Line label="סוג" value={it.type === "package" ? "חבילה" : "טרמפ"} />
+        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        {driverName ? <Line label="שליח" value={String(driverName)} /> : null}
+        {customerName ? (
+          <Line label="לקוח" value={String(customerName)} />
+        ) : null}
+        {it?.notes ? (
+          <Line label="הערות" value={String(it.notes)} multi />
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
-// Courier statuses
-function statusLabelCourier(s: CourierJobRow["status"]) {
-  return s === "open"
-    ? "פתוח"
-    : s === "assigned"
-      ? "שובצת"
-      : s === "in_transit"
-        ? "בדרך"
-        : s === "completed"
-          ? "הושלם"
-          : "בוטל";
+function OfferCard({ it }: { it: CourierOfferRow }) {
+  const range = windowRangeText(it.window_start, it.window_end);
+  const types =
+    Array.isArray(it.types) && it.types.length
+      ? it.types
+          .map((t) => (t === "package" ? "חבילות" : "טרמפיסטים"))
+          .join(", ")
+      : "—";
+  const dst = it.to_address || "כל יעד";
+  const min = pickAny(it, ["min_price"]);
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.card}>
+        <Text style={S.title}>{arrow(it.from_address, dst)}</Text>
+
+        <View style={S.row}>
+          <View style={S.rightRow}>
+            <View style={S.chip}>
+              <Text style={S.chipTxt}>זמינות פעילה</Text>
+            </View>
+            <Text style={S.windowLabel}>חלון</Text>
+          </View>
+          <Text style={S.meta}>{range}</Text>
+        </View>
+
+        <Line label="סוגים" value={types} />
+        <Line label="מחיר מינימלי" value={min != null ? `₪${min}` : "—"} />
+        {it?.notes ? (
+          <Line label="הערות" value={String(it.notes)} multi />
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
-function fmtDate(iso?: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, "0")}.${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}.${d.getFullYear()}`;
-}
-function fmtTime(iso?: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes()
-  ).padStart(2, "0")}`;
-}
-function fmtWindow(s?: string | null, e?: string | null) {
-  if (s && e) {
-    const same = fmtDate(s) === fmtDate(e);
-    return same
-      ? `חלון: ${fmtDate(s)} ${fmtTime(s)}–${fmtTime(e)}`
-      : `חלון: ${fmtDate(s)} ${fmtTime(s)} → ${fmtDate(e)} ${fmtTime(e)}`;
-  }
-  if (s) return `זמין מ: ${fmtDate(s)} ${fmtTime(s)}`;
-  if (e) return `עד: ${fmtDate(e)} ${fmtTime(e)}`;
-  return "ללא חלון זמן";
-}
-function offerRange(s?: string | null, e?: string | null) {
-  if (!s && !e) return "";
-  if (s && e) {
-    const same = fmtDate(s) === fmtDate(e);
-    return same
-      ? `${fmtDate(s)} ${fmtTime(s)}–${fmtTime(e)}`
-      : `${fmtDate(s)} ${fmtTime(s)} → ${fmtDate(e)} ${fmtTime(e)}`;
-  }
-  if (s) return `מ־${fmtDate(s)} ${fmtTime(s)}`;
-  return `עד־${fmtDate(e!)} ${fmtTime(e!)}`;
+/* ---------------- small UI parts ---------------- */
+
+function Line({
+  label,
+  value,
+  multi = false,
+}: {
+  label: string;
+  value: string;
+  multi?: boolean;
+}) {
+  return (
+    <View style={S.line}>
+      <Text style={S.lineLabel}>{label}</Text>
+      <Text
+        style={[S.lineValue, multi ? { flexWrap: "wrap" } : null]}
+        numberOfLines={multi ? undefined : 1}
+      >
+        {value}
+      </Text>
+    </View>
+  );
 }
 
 /* ---------------- styles ---------------- */
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, paddingHorizontal: 16, paddingTop: 45 },
+
   header: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
     color: COLORS.primaryDark,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 4,
+    paddingTop: 4,
+    paddingBottom: 8,
     textAlign: "left",
   },
+
+  loadingBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  loadingTxt: { color: COLORS.primaryDark, fontWeight: "700" },
+
+  wrap: { paddingVertical: 8 },
+  card: {
+    backgroundColor: COLORS.softMocha,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 0,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+
+  title: {
+    fontWeight: "900",
+    color: COLORS.text,
+    fontSize: 16,
+    marginBottom: 8,
+    textAlign: "left",
+  },
+
+  // RTL row: right side shows status + "חלון", left side shows times
+  row: {
+    flexDirection: "row-reverse",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 10,
+  },
+  rightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    alignSelf: "flex-start",
+  },
+  windowLabel: { color: COLORS.dim, fontWeight: "900", textAlign: "left" },
+
+  meta: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "left",
+    color: COLORS.text,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+
+  chip: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
+  chipTxt: { color: "#fff", fontWeight: "900", fontSize: 12 },
+
+  line: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 4,
+    gap: 8,
+  },
+  lineLabel: {
+    color: COLORS.dim,
+    fontWeight: "800",
+    width: 96,
+    textAlign: "left",
+  },
+  lineValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    flex: 1,
+    textAlign: "left",
+    minWidth: 0,
+  },
+
   empty: {
     textAlign: "center",
     color: COLORS.dim,
     marginTop: 18,
+    fontWeight: "700",
   },
 });

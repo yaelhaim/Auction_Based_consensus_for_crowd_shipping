@@ -22,6 +22,7 @@ export default function Layout() {
       <Stack.Screen name="sender_home_page" options={{ headerShown: false }} />
       <Stack.Screen name="rider_home_page" options={{ headerShown: false }} />
       <Stack.Screen name="courier_home_page" options={{ headerShown: false }} />
+      <Stack.Screen name="bucket_list" options={{ headerShown: false }} />
       <Stack.Screen
         name="sender_request_create"
         options={{ headerShown: false }}
@@ -31,7 +32,7 @@ export default function Layout() {
         options={{ headerShown: false }}
       />
       <Stack.Screen
-        name="courier_request_create"
+        name="courier_offer_create"
         options={{ headerShown: false }}
       />
       <Stack.Screen

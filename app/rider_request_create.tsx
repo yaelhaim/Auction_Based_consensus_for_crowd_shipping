@@ -1,5 +1,6 @@
-// app/rider_request_create.tsx
-// Create Ride Request (Rider)
+// Rider - Create Ride Request
+// Visuals: mocha cards + CTA identical to home button
+
 import React, { useState } from "react";
 import {
   View,
@@ -10,10 +11,12 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  SafeAreaView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Modal from "react-native-modal";
 import UIDatePicker, { useDefaultStyles } from "react-native-ui-datepicker";
+import { LinearGradient } from "expo-linear-gradient";
 import dayjs from "dayjs";
 import "dayjs/locale/he";
 
@@ -23,21 +26,17 @@ import { createRiderRequest, type CreateRiderPayload } from "../lib/api";
 
 dayjs.locale("he");
 
-function fmt(dt?: Date | null) {
-  if (!dt) return "";
-  return dayjs(dt).format("DD.MM.YYYY HH:mm");
-}
+const fmt = (d?: Date | null) => (d ? dayjs(d).format("DD.MM.YYYY HH:mm") : "");
 
 // נסיון לחלץ מזהה בקשה ממבני תשובה שונים
 function pickRequestId(res: any): string | null {
   if (!res) return null;
   if (typeof res === "string") return res;
-  if (typeof res?.id !== "undefined") return String(res.id);
-  if (typeof res?.request_id !== "undefined") return String(res.request_id);
-  if (typeof res?.requestId !== "undefined") return String(res.requestId);
-  if (typeof res?.data?.id !== "undefined") return String(res.data.id);
-  if (typeof res?.data?.request_id !== "undefined")
-    return String(res.data.request_id);
+  if (res?.id != null) return String(res.id);
+  if (res?.request_id != null) return String(res.request_id);
+  if (res?.requestId != null) return String(res.requestId);
+  if (res?.data?.id != null) return String(res.data.id);
+  if (res?.data?.request_id != null) return String(res.data.request_id);
   return null;
 }
 
@@ -45,7 +44,7 @@ export default function RiderRequestCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
-  // form
+  // טופס
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [startDT, setStartDT] = useState<Date | null>(null);
@@ -54,7 +53,7 @@ export default function RiderRequestCreate() {
   const [notes, setNotes] = useState("");
   const [maxPrice, setMaxPrice] = useState<string>("");
 
-  // date modal
+  // מודל תאריך/שעה
   const [dtModalOpen, setDtModalOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
@@ -62,31 +61,31 @@ export default function RiderRequestCreate() {
   const [submitting, setSubmitting] = useState(false);
 
   const seatsNum = Math.max(1, Number.isFinite(+seats) ? +seats : 0);
-  const ready =
-    fromAddress.trim().length > 0 &&
-    toAddress.trim().length > 0 &&
+  const מוכן =
+    !!fromAddress.trim() &&
+    !!toAddress.trim() &&
     !!startDT &&
     !!endDT &&
     seatsNum >= 1 &&
     Number(maxPrice) > 0;
 
-  function openDT(target: "start" | "end") {
-    setDtTarget(target);
-    setTempDT((target === "start" ? startDT : endDT) || new Date());
+  function פתחתאריך(יעד: "start" | "end") {
+    setDtTarget(יעד);
+    setTempDT((יעד === "start" ? startDT : endDT) || new Date());
     setDtModalOpen(true);
   }
-  function confirmDT() {
+  function אשרתאריך() {
     if (dtTarget === "start") setStartDT(new Date(tempDT));
     else setEndDT(new Date(tempDT));
     setDtModalOpen(false);
   }
 
-  async function submit() {
+  async function שליחה() {
     if (!token) {
       Alert.alert("שגיאה", "אסימון התחברות חסר");
       return;
     }
-    if (!ready) {
+    if (!מוכן) {
       Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום הבקשה");
       return;
     }
@@ -102,21 +101,13 @@ export default function RiderRequestCreate() {
         max_price: Number(maxPrice),
       };
 
-      // שולחים לשרת
       const res = await createRiderRequest(String(token), payload);
       const requestId = pickRequestId(res);
-
       if (!requestId) {
-        // אם אין לנו מזהה בקשה, אין לנו איך להציג מסך המתנה — נודיע למשתמש
-        Alert.alert(
-          "בקשה נשמרה",
-          "הבקשה נשמרה, אך לא קיבלנו מזהה בקשה להצגת מסך ההמתנה. נחזיר לדף הבית."
-        );
+        Alert.alert("בקשה נשמרה", "לא קיבלנו מזהה בקשה. חוזרים לדף הבית.");
         router.replace({ pathname: "/rider_home_page", params: { token } });
         return;
       }
-
-      // ניווט למסך ההמתנה שמבצע דחיית פוש + פולינג להתאמה
       router.replace({
         pathname: "/matching-await",
         params: { requestId, token, role: "rider" },
@@ -128,12 +119,7 @@ export default function RiderRequestCreate() {
     }
   }
 
-  // step states
-  const step1Done = !!(fromAddress.trim() && toAddress.trim());
-  const step2Done = !!(startDT && endDT);
-  const step3Done = Number(maxPrice) > 0 && seatsNum >= 1;
-
-  // datepicker styles
+  // עיצוב רכיב בחירת תאריך
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -142,207 +128,219 @@ export default function RiderRequestCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
-  return (
-    <View style={S.screen}>
-      <Header
-        title="בקשת טרמפ חדשה"
-        subtitle="פרטי נסיעה • זמנים וכתובות • תקציב ואישור"
-      />
+  // מצב צעדים
+  const שלב1 = !!(fromAddress.trim() && toAddress.trim());
+  const שלב2 = !!(startDT && endDT);
+  const שלב3 = Number(maxPrice) > 0 && seatsNum >= 1;
 
-      {/* step bar */}
-      <View style={S.stepbar}>
-        {[
-          { label: "פרטים", done: step1Done },
-          { label: "זמנים", done: step2Done },
-          { label: "אישור", done: step3Done },
-        ].map((s, i) => (
-          <View style={S.stepItem} key={s.label}>
-            <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
-              <Text style={[S.stepIndex, s.done && S.stepIndexDone]}>
-                {i + 1}
+  return (
+    <LinearGradient
+      colors={[COLORS.green1, COLORS.green2, COLORS.green3, COLORS.green4]}
+      start={{ x: 1, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={{ flex: 1 }}
+    >
+      <SafeAreaView style={S.safe}>
+        <Header
+          title="בקשת טרמפ חדשה"
+          subtitle="פרטי נסיעה • זמנים וכתובות • תקציב ואישור"
+        />
+
+        <View style={S.stepbar}>
+          {[
+            { label: "פרטים", done: שלב1 },
+            { label: "זמנים", done: שלב2 },
+            { label: "אישור", done: שלב3 },
+          ].map((s, i) => (
+            <View style={S.stepItem} key={s.label}>
+              <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
+                <Text style={[S.stepIndex, s.done && S.stepIndexDone]}>
+                  {i + 1}
+                </Text>
+              </View>
+              <Text style={S.stepLabel}>{s.label}</Text>
+              {i < 2 && (
+                <View
+                  style={[
+                    S.stepDivider,
+                    (i === 0 ? שלב1 : שלב2) && S.stepDividerDone,
+                  ]}
+                />
+              )}
+            </View>
+          ))}
+        </View>
+
+        <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
+          {/* כתובות */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>כתובות</Text>
+            <View style={S.field}>
+              <Text style={S.label}>נקודת יציאה *</Text>
+              <TextInput
+                style={S.input}
+                placeholder="לדוגמה: בן גוריון 10, תל אביב"
+                value={fromAddress}
+                onChangeText={setFromAddress}
+                textAlign="right"
+              />
+            </View>
+            <View style={S.field}>
+              <Text style={S.label}>יעד *</Text>
+              <TextInput
+                style={S.input}
+                placeholder="לדוגמה: הרצל 5, ראשון לציון"
+                value={toAddress}
+                onChangeText={setToAddress}
+                textAlign="right"
+              />
+            </View>
+          </View>
+
+          {/* חלון זמן */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>חלון זמן</Text>
+            <View style={S.row2}>
+              <TouchableOpacity
+                style={S.pickerBtn}
+                onPress={() => פתחתאריך("start")}
+              >
+                <Text style={S.pickerLabel}>התחלה *</Text>
+                <Text style={S.pickerValue}>
+                  {startDT ? fmt(startDT) : "בחרי תאריך ושעה"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={S.pickerBtn}
+                onPress={() => פתחתאריך("end")}
+              >
+                <Text style={S.pickerLabel}>סיום *</Text>
+                <Text style={S.pickerValue}>
+                  {endDT ? fmt(endDT) : "בחרי תאריך ושעה"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={S.hint}>טיפ: חלון רחב מגדיל סיכוי להתאמה מהירה.</Text>
+          </View>
+
+          {/* נוסעים */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>נוסעים</Text>
+            <View style={S.field}>
+              <Text style={S.label}>מספר נוסעים *</Text>
+              <TextInput
+                style={S.input}
+                placeholder="1"
+                keyboardType="numeric"
+                value={seats}
+                onChangeText={setSeats}
+                textAlign="right"
+              />
+              <Text style={S.hint}>
+                מינימום 1. הזיני את מספר המקומות הנדרש.
               </Text>
             </View>
-            <Text style={S.stepLabel}>{s.label}</Text>
-            {i < 2 && (
-              <View
-                style={[
-                  S.stepDivider,
-                  (i === 0 ? step1Done : step2Done) && S.stepDividerDone,
-                ]}
+          </View>
+
+          {/* פרטים נוספים */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>פרטים נוספים</Text>
+            <View style={S.field}>
+              <Text style={S.label}>הערות (אופציונלי)</Text>
+              <TextInput
+                style={[S.input, { height: 100, textAlignVertical: "top" }]}
+                placeholder="עם כלב / ציוד / העדפות מיוחדות..."
+                multiline
+                value={notes}
+                onChangeText={setNotes}
+                textAlign="right"
               />
-            )}
+            </View>
           </View>
-        ))}
-      </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
-        {/* addresses */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>כתובות</Text>
-          <View style={S.field}>
-            <Text style={S.label}>נקודת יציאה *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="לדוגמה: בן גוריון 10, תל אביב"
-              value={fromAddress}
-              onChangeText={setFromAddress}
-              textAlign="right"
-            />
-          </View>
-          <View style={S.field}>
-            <Text style={S.label}>יעד *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="לדוגמה: הרצל 5, ראשון לציון"
-              value={toAddress}
-              onChangeText={setToAddress}
-              textAlign="right"
-            />
-          </View>
-        </View>
-
-        {/* window */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>חלון זמן</Text>
-          <View style={S.row2}>
-            <TouchableOpacity
-              style={S.pickerBtn}
-              onPress={() => openDT("start")}
-            >
-              <Text style={S.pickerLabel}>התחלה *</Text>
-              <Text style={S.pickerValue}>
-                {startDT ? fmt(startDT) : "בחרי תאריך ושעה"}
+          {/* תקציב */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>תקציב</Text>
+            <View style={S.field}>
+              <Text style={S.label}>תקציב מקסימלי (₪) *</Text>
+              <TextInput
+                style={S.input}
+                placeholder="לדוגמה: 40"
+                keyboardType="numeric"
+                value={maxPrice}
+                onChangeText={setMaxPrice}
+                textAlign="right"
+              />
+              <Text style={S.hint}>
+                זהו הסכום המקסימלי שאת/ה מוכנ/ה לשלם על הטרמפ.
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={S.pickerBtn} onPress={() => openDT("end")}>
-              <Text style={S.pickerLabel}>סיום *</Text>
-              <Text style={S.pickerValue}>
-                {endDT ? fmt(endDT) : "בחרי תאריך ושעה"}
-              </Text>
-            </TouchableOpacity>
+            </View>
           </View>
-          <Text style={S.hint}>טיפ: חלון רחב מגדיל סיכוי להתאמה מהירה.</Text>
-        </View>
+        </ScrollView>
 
-        {/* seats */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>נוסעים</Text>
-          <View style={S.field}>
-            <Text style={S.label}>מספר נוסעים *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="1"
-              keyboardType="numeric"
-              value={seats}
-              onChangeText={setSeats}
-              textAlign="right"
-            />
-            <Text style={S.hint}>מינימום 1. הזיני את מספר המקומות הנדרש.</Text>
-          </View>
-        </View>
+        <TouchableOpacity
+          style={[S.bottomBar, !מוכן || submitting ? { opacity: 0.6 } : null]}
+          activeOpacity={0.9}
+          onPress={שליחה}
+          disabled={!מוכן || submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={S.bottomBarText}>פרסום בקשה</Text>
+          )}
+        </TouchableOpacity>
 
-        {/* notes */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>פרטים נוספים</Text>
-          <View style={S.field}>
-            <Text style={S.label}>הערות (אופציונלי)</Text>
-            <TextInput
-              style={[S.input, { height: 100, textAlignVertical: "top" }]}
-              placeholder="עם כלב / ציוד / העדפות מיוחדות..."
-              multiline
-              value={notes}
-              onChangeText={setNotes}
-              textAlign="right"
-            />
-          </View>
-        </View>
-
-        {/* budget */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>תקציב</Text>
-          <View style={S.field}>
-            <Text style={S.label}>תקציב מקסימלי (₪) *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="לדוגמה: 40"
-              keyboardType="numeric"
-              value={maxPrice}
-              onChangeText={setMaxPrice}
-              textAlign="right"
-            />
-            <Text style={S.hint}>
-              זהו הסכום המקסימלי שאת/ה מוכנ/ה לשלם על הטרמפ.
+        <Modal
+          isVisible={dtModalOpen}
+          onBackdropPress={() => setDtModalOpen(false)}
+          onBackButtonPress={() => setDtModalOpen(false)}
+          style={{ justifyContent: "flex-end", margin: 0 }}
+        >
+          <View style={S.modalSheet}>
+            <Text style={S.modalTitle}>
+              {dtTarget === "start"
+                ? "בחרי תאריך ושעה - התחלה"
+                : "בחרי תאריך ושעה - סיום"}
             </Text>
+            <UIDatePicker
+              mode="single"
+              date={tempDT}
+              onChange={(p: any) => p?.date && setTempDT(p.date)}
+              timePicker
+              locale="he"
+              firstDayOfWeek={0}
+              navigationPosition="around"
+              styles={dpStyles}
+            />
+            <View style={S.modalRow}>
+              <TouchableOpacity
+                style={[S.modalBtn, S.modalCancel]}
+                onPress={() => setDtModalOpen(false)}
+              >
+                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[S.modalBtn, S.modalConfirm]}
+                onPress={אשרתאריך}
+              >
+                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </ScrollView>
-
-      {/* CTA */}
-      <TouchableOpacity
-        style={[S.bottomBar, !ready || submitting ? { opacity: 0.6 } : null]}
-        activeOpacity={0.9}
-        onPress={submit}
-        disabled={!ready || submitting}
-      >
-        {submitting ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={S.bottomBarText}>פרסום בקשה</Text>
-        )}
-      </TouchableOpacity>
-
-      {/* date modal */}
-      <Modal
-        isVisible={dtModalOpen}
-        onBackdropPress={() => setDtModalOpen(false)}
-        onBackButtonPress={() => setDtModalOpen(false)}
-        style={{ justifyContent: "flex-end", margin: 0 }}
-      >
-        <View style={S.modalSheet}>
-          <Text style={S.modalTitle}>
-            {dtTarget === "start"
-              ? "בחרי תאריך ושעה - התחלה"
-              : "בחרי תאריך ושעה - סיום"}
-          </Text>
-
-          <UIDatePicker
-            mode="single"
-            date={tempDT}
-            onChange={(p: any) => p?.date && setTempDT(p.date)}
-            timePicker
-            locale="he"
-            firstDayOfWeek={0}
-            navigationPosition="around"
-            styles={dpStyles}
-          />
-
-          <View style={S.modalRow}>
-            <TouchableOpacity
-              style={[S.modalBtn, S.modalCancel]}
-              onPress={() => setDtModalOpen(false)}
-            >
-              <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[S.modalBtn, S.modalConfirm]}
-              onPress={confirmDT}
-            >
-              <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
+  safe: { flex: 1, paddingHorizontal: 16, paddingTop: 45 },
 
-  // Stepbar (RTL)
   stepbar: {
     flexDirection: "row",
     alignItems: "center",
+    marginTop: 6,
     marginBottom: 12,
   },
   stepItem: { flexDirection: "row", alignItems: "center", flex: 1 },
@@ -369,14 +367,12 @@ const S = StyleSheet.create({
   },
   stepDividerDone: { backgroundColor: COLORS.primary },
 
-  // Cards — soft mocha
   card: {
     backgroundColor: COLORS.softMocha,
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#C19A6B",
+    borderWidth: 0,
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -390,7 +386,6 @@ const S = StyleSheet.create({
     textAlign: "left",
   },
 
-  // Fields
   field: { marginBottom: 10 },
   label: { fontWeight: "800", color: COLORS.text, textAlign: "left" },
   input: {
@@ -398,21 +393,20 @@ const S = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
     paddingVertical: 12,
     paddingHorizontal: 12,
     color: COLORS.text,
   },
   hint: { marginTop: 6, color: COLORS.dim, textAlign: "left" },
 
-  // Pickers
   row2: { flexDirection: "row-reverse", gap: 10 },
   pickerBtn: {
     flex: 1,
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
     paddingVertical: 12,
     paddingHorizontal: 12,
   },
@@ -421,22 +415,29 @@ const S = StyleSheet.create({
     marginTop: 4,
     fontWeight: "900",
     color: COLORS.text,
-    textAlign: "left",
+    textAlign: "right",
   },
 
-  // Bottom CTA
   bottomBar: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingVertical: 16,
+    left: 16,
+    right: 16,
+    bottom: 18,
+    height: 54,
     backgroundColor: COLORS.primary,
+    borderRadius: 28,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
   bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
-  // Modal sheet
   modalSheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,

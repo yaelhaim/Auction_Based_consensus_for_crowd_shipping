@@ -1,4 +1,5 @@
-// app/courier_offer_create.tsx
+// Courier - Create Availability Offer
+// Visuals: mocha cards + CTA identical to home button
 
 import React, { useState } from "react";
 import {
@@ -10,10 +11,12 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  SafeAreaView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Modal from "react-native-modal";
 import UIDatePicker, { useDefaultStyles } from "react-native-ui-datepicker";
+import { LinearGradient } from "expo-linear-gradient";
 import dayjs from "dayjs";
 import "dayjs/locale/he";
 
@@ -23,15 +26,13 @@ import { createCourierOffer } from "../lib/api";
 
 dayjs.locale("he");
 
-function fmt(dt?: Date | null) {
-  if (!dt) return "";
-  return dayjs(dt).format("DD.MM.YYYY HH:mm");
-}
+const fmt = (d?: Date | null) => (d ? dayjs(d).format("DD.MM.YYYY HH:mm") : "");
 
 export default function CourierOfferCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
+  // טופס
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState<string>("");
   const [anyDestination, setAnyDestination] = useState(false);
@@ -45,42 +46,42 @@ export default function CourierOfferCreate() {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // Date modal
+  // מודל תאריך/שעה
   const [dtOpen, setDtOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
 
-  const ready =
-    fromAddress.trim().length > 0 &&
-    (!!anyDestination || toAddress.trim().length > 0) &&
+  const מוכן =
+    !!fromAddress.trim() &&
+    (!!anyDestination || !!toAddress.trim()) &&
     !!startDT &&
     !!endDT &&
     Number(minPrice) > 0 &&
     types.length > 0;
 
-  function toggleType(t: "package" | "passenger") {
+  function החלףסוג(t: "package" | "passenger") {
     setTypes((prev) =>
       prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]
     );
   }
 
-  function openDT(target: "start" | "end") {
-    setDtTarget(target);
-    setTempDT((target === "start" ? startDT : endDT) || new Date());
+  function פתחתאריך(יעד: "start" | "end") {
+    setDtTarget(יעד);
+    setTempDT((יעד === "start" ? startDT : endDT) || new Date());
     setDtOpen(true);
   }
-  function confirmDT() {
+  function אשרתאריך() {
     if (dtTarget === "start") setStartDT(new Date(tempDT));
     else setEndDT(new Date(tempDT));
     setDtOpen(false);
   }
 
-  async function submit() {
+  async function שליחה() {
     if (!token) {
       Alert.alert("שגיאה", "אסימון התחברות חסר");
       return;
     }
-    if (!ready) {
+    if (!מוכן) {
       Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום ההצעה");
       return;
     }
@@ -111,7 +112,7 @@ export default function CourierOfferCreate() {
     }
   }
 
-  // DatePicker highlight כמו במסכים האחרים
+  // עיצוב רכיב בחירת תאריך
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -120,259 +121,266 @@ export default function CourierOfferCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
-  // Stepbar states
-  const step1Done = !!fromAddress && (anyDestination || !!toAddress);
-  const step2Done = !!(startDT && endDT);
-  const step3Done = Number(minPrice) > 0 && types.length > 0;
+  // צעדים
+  const שלב1 = !!fromAddress && (anyDestination || !!toAddress);
+  const שלב2 = !!(startDT && endDT);
+  const שלב3 = Number(minPrice) > 0 && types.length > 0;
 
   return (
-    <View style={S.screen}>
-      <Header
-        title="הצעת שליח חדשה"
-        subtitle="אזור וזמן • סוגי משימות • מחיר מינימלי"
-      />
+    <LinearGradient
+      colors={[COLORS.green1, COLORS.green2, COLORS.green3, COLORS.green4]}
+      start={{ x: 1, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={{ flex: 1 }}
+    >
+      <SafeAreaView style={S.safe}>
+        <Header
+          title="הצעת שליח חדשה"
+          subtitle="אזור וזמן • סוגי משימות • מחיר מינימלי"
+        />
 
-      {/* Stepbar */}
-      <View style={S.stepbar}>
-        {[
-          { label: "פרטים", done: step1Done },
-          { label: "זמנים", done: step2Done },
-          { label: "אישור", done: step3Done },
-        ].map((s, i) => (
-          <View style={S.stepItem} key={s.label}>
-            <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
-              <Text style={[S.stepIndex, s.done && S.stepIndexDone]}>
-                {i + 1}
-              </Text>
+        <View style={S.stepbar}>
+          {[
+            { label: "פרטים", done: שלב1 },
+            { label: "זמנים", done: שלב2 },
+            { label: "אישור", done: שלב3 },
+          ].map((s, i) => (
+            <View style={S.stepItem} key={s.label}>
+              <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
+                <Text style={[S.stepIndex, s.done && S.stepIndexDone]}>
+                  {i + 1}
+                </Text>
+              </View>
+              <Text style={S.stepLabel}>{s.label}</Text>
+              {i < 2 && (
+                <View
+                  style={[
+                    S.stepDivider,
+                    (i === 0 ? שלב1 : שלב2) && S.stepDividerDone,
+                  ]}
+                />
+              )}
             </View>
-            <Text style={S.stepLabel}>{s.label}</Text>
-            {i < 2 && (
-              <View
-                style={[
-                  S.stepDivider,
-                  (i === 0 ? step1Done : step2Done) && S.stepDividerDone,
-                ]}
-              />
-            )}
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
-        {/* Addresses */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>כתובות</Text>
-          <View style={S.field}>
-            <Text style={S.label}>נקודת מוצא *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="לדוגמה: דרך השלום 10, תל אביב"
-              value={fromAddress}
-              onChangeText={setFromAddress}
-              textAlign="right"
-            />
-          </View>
-
-          <View style={[S.row2, { marginBottom: 8 }]}>
-            <TouchableOpacity
-              style={[S.segmentBtn, anyDestination && S.segmentBtnActive]}
-              onPress={() => setAnyDestination(true)}
-              activeOpacity={0.8}
-            >
-              <Text
-                style={[S.segmentTxt, anyDestination && S.segmentTxtActive]}
-              >
-                פתוח לכל יעד
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[S.segmentBtn, !anyDestination && S.segmentBtnActive]}
-              onPress={() => setAnyDestination(false)}
-              activeOpacity={0.8}
-            >
-              <Text
-                style={[S.segmentTxt, !anyDestination && S.segmentTxtActive]}
-              >
-                יעד ספציפי
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {!anyDestination && (
+        <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
+          {/* כתובות */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>כתובות</Text>
             <View style={S.field}>
-              <Text style={S.label}>יעד *</Text>
+              <Text style={S.label}>נקודת מוצא *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: חיפה, אזור הצפון"
-                value={toAddress}
-                onChangeText={setToAddress}
+                placeholder="לדוגמה: דרך השלום 10, תל אביב"
+                value={fromAddress}
+                onChangeText={setFromAddress}
                 textAlign="right"
               />
             </View>
+
+            <View style={[S.row2, { marginBottom: 8 }]}>
+              <TouchableOpacity
+                style={[S.segmentBtn, anyDestination && S.segmentBtnActive]}
+                onPress={() => setAnyDestination(true)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[S.segmentTxt, anyDestination && S.segmentTxtActive]}
+                >
+                  פתוח לכל יעד
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[S.segmentBtn, !anyDestination && S.segmentBtnActive]}
+                onPress={() => setAnyDestination(false)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[S.segmentTxt, !anyDestination && S.segmentTxtActive]}
+                >
+                  יעד ספציפי
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {!anyDestination && (
+              <View style={S.field}>
+                <Text style={S.label}>יעד *</Text>
+                <TextInput
+                  style={S.input}
+                  placeholder="לדוגמה: חיפה, אזור הצפון"
+                  value={toAddress}
+                  onChangeText={setToAddress}
+                  textAlign="right"
+                />
+              </View>
+            )}
+          </View>
+
+          {/* חלון זמן */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>חלון זמן</Text>
+            <View style={S.row2}>
+              <TouchableOpacity
+                style={S.pickerBtn}
+                onPress={() => פתחתאריך("start")}
+              >
+                <Text style={S.pickerLabel}>התחלה *</Text>
+                <Text style={S.pickerValue}>
+                  {startDT ? fmt(startDT) : "בחרו תאריך ושעה"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={S.pickerBtn}
+                onPress={() => פתחתאריך("end")}
+              >
+                <Text style={S.pickerLabel}>סיום *</Text>
+                <Text style={S.pickerValue}>
+                  {endDT ? fmt(endDT) : "בחרו תאריך ושעה"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={S.hint}>
+              טיפ: חלון רחב מגדיל התאמות עם בקשות פתוחות.
+            </Text>
+          </View>
+
+          {/* סוגי משימות ומחיר */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>סוגי משימות ומחיר</Text>
+
+            <Text style={S.label}>אני מעוניין לבצע *</Text>
+            <View style={[S.row2, { marginTop: 8 }]}>
+              <TouchableOpacity
+                style={[
+                  S.segmentBtn,
+                  types.includes("package") && S.segmentBtnActive,
+                ]}
+                onPress={() => החלףסוג("package")}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    S.segmentTxt,
+                    types.includes("package") && S.segmentTxtActive,
+                  ]}
+                >
+                  חבילות
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  S.segmentBtn,
+                  types.includes("passenger") && S.segmentBtnActive,
+                ]}
+                onPress={() => החלףסוג("passenger")}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    S.segmentTxt,
+                    types.includes("passenger") && S.segmentTxtActive,
+                  ]}
+                >
+                  טרמפיסטים
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[S.field, { marginTop: 10 }]}>
+              <Text style={S.label}>מחיר מינימלי (₪) *</Text>
+              <TextInput
+                style={S.input}
+                placeholder="לדוגמה: 30"
+                keyboardType="numeric"
+                value={minPrice}
+                onChangeText={setMinPrice}
+                textAlign="right"
+              />
+              <Text style={S.hint}>זהו המחיר המינימלי לנסיעה/משלוח.</Text>
+            </View>
+          </View>
+
+          {/* הערות */}
+          <View style={S.card}>
+            <Text style={S.cardTitle}>הערות (אופציונלי)</Text>
+            <View style={S.field}>
+              <TextInput
+                style={[S.input, { height: 100, textAlignVertical: "top" }]}
+                placeholder="פרטים רלוונטיים (ציוד, זמנים, העדפות...)"
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                textAlign="right"
+              />
+            </View>
+          </View>
+        </ScrollView>
+
+        <TouchableOpacity
+          style={[S.bottomBar, !מוכן || submitting ? { opacity: 0.6 } : null]}
+          activeOpacity={0.9}
+          onPress={שליחה}
+          disabled={!מוכן || submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={S.bottomBarText}>פרסום הצעת שליח</Text>
           )}
-        </View>
+        </TouchableOpacity>
 
-        {/* Window */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>חלון זמן</Text>
-          <View style={S.row2}>
-            <TouchableOpacity
-              style={S.pickerBtn}
-              onPress={() => openDT("start")}
-            >
-              <Text style={S.pickerLabel}>התחלה *</Text>
-              <Text style={S.pickerValue}>
-                {startDT ? fmt(startDT) : "בחרו תאריך ושעה"}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={S.pickerBtn} onPress={() => openDT("end")}>
-              <Text style={S.pickerLabel}>סיום *</Text>
-              <Text style={S.pickerValue}>
-                {endDT ? fmt(endDT) : "בחרו תאריך ושעה"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={S.hint}>
-            טיפ: חלון רחב מגדיל התאמות עם בקשות פתוחות.
-          </Text>
-        </View>
-
-        {/* Types & price */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>סוגי משימות ומחיר</Text>
-
-          <Text style={S.label}>אני מעוניין לבצע *</Text>
-          <View style={[S.row2, { marginTop: 8 }]}>
-            <TouchableOpacity
-              style={[
-                S.segmentBtn,
-                types.includes("package") && S.segmentBtnActive,
-              ]}
-              onPress={() => toggleType("package")}
-              activeOpacity={0.8}
-            >
-              <Text
-                style={[
-                  S.segmentTxt,
-                  types.includes("package") && S.segmentTxtActive,
-                ]}
-              >
-                חבילות
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                S.segmentBtn,
-                types.includes("passenger") && S.segmentBtnActive,
-              ]}
-              onPress={() => toggleType("passenger")}
-              activeOpacity={0.8}
-            >
-              <Text
-                style={[
-                  S.segmentTxt,
-                  types.includes("passenger") && S.segmentTxtActive,
-                ]}
-              >
-                טרמפיסטים
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={[S.field, { marginTop: 10 }]}>
-            <Text style={S.label}>מחיר מינימלי (₪) *</Text>
-            <TextInput
-              style={S.input}
-              placeholder="לדוגמה: 30"
-              keyboardType="numeric"
-              value={minPrice}
-              onChangeText={setMinPrice}
-              textAlign="right"
+        <Modal
+          isVisible={dtOpen}
+          onBackdropPress={() => setDtOpen(false)}
+          onBackButtonPress={() => setDtOpen(false)}
+          style={{ justifyContent: "flex-end", margin: 0 }}
+        >
+          <View style={S.modalSheet}>
+            <Text style={S.modalTitle}>
+              {dtTarget === "start"
+                ? "בחרו תאריך ושעה - התחלה"
+                : "בחרו תאריך ושעה - סיום"}
+            </Text>
+            <UIDatePicker
+              mode="single"
+              date={tempDT}
+              onChange={(p: any) => p?.date && setTempDT(p.date)}
+              timePicker
+              locale="he"
+              firstDayOfWeek={0}
+              navigationPosition="around"
+              styles={dpStyles}
             />
-            <Text style={S.hint}>זהו המחיר המינימלי לנסיעה/משלוח.</Text>
+            <View style={S.modalRow}>
+              <TouchableOpacity
+                style={[S.modalBtn, S.modalCancel]}
+                onPress={() => setDtOpen(false)}
+              >
+                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[S.modalBtn, S.modalConfirm]}
+                onPress={אשרתאריך}
+              >
+                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-
-        {/* Notes (optional) */}
-        <View style={S.card}>
-          <Text style={S.cardTitle}>הערות (אופציונלי)</Text>
-          <View style={S.field}>
-            <TextInput
-              style={[S.input, { height: 100, textAlignVertical: "top" }]}
-              placeholder="פרטים רלוונטיים (ציוד, זמנים, העדפות...)"
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              textAlign="right"
-            />
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Bottom CTA */}
-      <TouchableOpacity
-        style={[S.bottomBar, !ready || submitting ? { opacity: 0.6 } : null]}
-        activeOpacity={0.9}
-        onPress={submit}
-        disabled={!ready || submitting}
-      >
-        {submitting ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={S.bottomBarText}>פרסום הצעת שליח</Text>
-        )}
-      </TouchableOpacity>
-
-      {/* Date modal */}
-      <Modal
-        isVisible={dtOpen}
-        onBackdropPress={() => setDtOpen(false)}
-        onBackButtonPress={() => setDtOpen(false)}
-        style={{ justifyContent: "flex-end", margin: 0 }}
-      >
-        <View style={S.modalSheet}>
-          <Text style={S.modalTitle}>
-            {dtTarget === "start"
-              ? "בחרו תאריך ושעה - התחלה"
-              : "בחרו תאריך ושעה - סיום"}
-          </Text>
-          <UIDatePicker
-            mode="single"
-            date={tempDT}
-            onChange={(p: any) => p?.date && setTempDT(p.date)}
-            timePicker
-            locale="he"
-            firstDayOfWeek={0}
-            navigationPosition="around"
-            styles={dpStyles}
-          />
-          <View style={S.modalRow}>
-            <TouchableOpacity
-              style={[S.modalBtn, S.modalCancel]}
-              onPress={() => setDtOpen(false)}
-            >
-              <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[S.modalBtn, S.modalConfirm]}
-              onPress={confirmDT}
-            >
-              <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
+  safe: { flex: 1, paddingHorizontal: 16, paddingTop: 45 },
 
-  // Stepbar
   stepbar: {
     flexDirection: "row",
     alignItems: "center",
+    marginTop: 6,
     marginBottom: 12,
   },
   stepItem: { flexDirection: "row", alignItems: "center", flex: 1 },
@@ -399,14 +407,12 @@ const S = StyleSheet.create({
   },
   stepDividerDone: { backgroundColor: COLORS.primary },
 
-  // Cards
   card: {
     backgroundColor: COLORS.softMocha,
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#C19A6B",
+    borderWidth: 0,
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -420,7 +426,6 @@ const S = StyleSheet.create({
     textAlign: "left",
   },
 
-  // Fields
   field: { marginBottom: 10 },
   label: { fontWeight: "800", color: COLORS.text, textAlign: "left" },
   input: {
@@ -428,21 +433,20 @@ const S = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
     paddingVertical: 12,
     paddingHorizontal: 12,
     color: COLORS.text,
   },
   hint: { marginTop: 6, color: COLORS.dim, textAlign: "left" },
 
-  // Rows / buttons
   row2: { flexDirection: "row-reverse", gap: 10 },
   pickerBtn: {
     flex: 1,
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
     paddingVertical: 12,
     paddingHorizontal: 12,
   },
@@ -451,10 +455,9 @@ const S = StyleSheet.create({
     marginTop: 4,
     fontWeight: "900",
     color: COLORS.text,
-    textAlign: "left",
+    textAlign: "right",
   },
 
-  // Segments
   segmentBtn: {
     flex: 1,
     paddingVertical: 10,
@@ -462,25 +465,32 @@ const S = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
   },
   segmentBtnActive: { backgroundColor: COLORS.primary },
   segmentTxt: { color: COLORS.primaryDark, fontWeight: "800" },
   segmentTxtActive: { color: "#fff" },
 
-  // Bottom CTA
   bottomBar: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingVertical: 16,
+    left: 16,
+    right: 16,
+    bottom: 18,
+    height: 54,
     backgroundColor: COLORS.primary,
+    borderRadius: 28,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
   bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
-  // Modal
   modalSheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
@@ -494,7 +504,7 @@ const S = StyleSheet.create({
     color: COLORS.primaryDark,
     marginBottom: 8,
   },
-  modalRow: { flexDirection: "row", gap: 12, marginTop: 8 },
+  modalRow: { flexDirection: "row-reverse", gap: 12, marginTop: 8 },
   modalBtn: {
     flex: 1,
     borderRadius: 12,
