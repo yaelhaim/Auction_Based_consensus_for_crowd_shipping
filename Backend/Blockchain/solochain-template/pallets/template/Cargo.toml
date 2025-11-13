@@ -13,6 +13,7 @@ publish = false
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
+
 codec = { features = ["derive"], workspace = true }
 frame-benchmarking = { optional = true, workspace = true }
 frame-support.workspace = true

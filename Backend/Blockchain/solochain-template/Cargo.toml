@@ -85,4 +85,3 @@ panic = "unwind"
 codegen-units = 1
 inherits = "release"
 lto = true
-

@@ -180,7 +180,8 @@ class MatchItem(BaseModel):
 class SubmitProposalBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
     slot: Annotated[int, Field(ge=0)]
-    total_score: int
+    # If client does not send total_score, default to 0 (we do not fabricate any other value).
+    total_score: int = 0
     matches: List[MatchItem]
 
 class FinalizeBody(BaseModel):
@@ -389,14 +390,24 @@ def submit_proposal(body: SubmitProposalBody):
     Submit (or improve) the best proposal for a slot to the PoBA pallet.
     Now includes retry with increasing `tip` to overcome 1014 "Priority is too low".
     Also supports waiting for FINALIZATION via POBA_WAIT_FINALIZATION=1.
-    Tunables via env:
-      POBA_TX_MAX_ATTEMPTS (default 3)
-      POBA_TX_TIP_BASE     (default 0)
-      POBA_TX_TIP_STEP     (default 1000)
-      POBA_TX_BACKOFF_MS   (default 150)
-      POBA_WAIT_FINALIZATION (default 0)
-      POBA_FINALIZATION_TIMEOUT_SEC (default 60)  # informational only in this build
+
+    API semantics:
+      - Domain "no matches" is NOT treated as an HTTP error:
+        we return ok=false, submitted=false, reason="no_matches" with HTTP 200.
+      - Network / RPC / dispatch problems ARE errors (4xx/5xx).
     """
+    # Soft guard: no matches means "nothing to submit", not an error.
+    if not body.matches:
+        total_score = int(body.total_score or 0)
+        return {
+            "ok": False,
+            "submitted": False,
+            "reason": "no_matches",
+            "slot": body.slot,
+            "total_score": total_score,
+            "matches": [],
+        }
+
     substrate = get_substrate()
     signer = get_signer()
 
@@ -413,6 +424,9 @@ def submit_proposal(body: SubmitProposalBody):
         })
 
     matches_param_name = _param_matches()
+    # If client didn't send a score, fall back to 0 (do not fabricate any other value).
+    total_score = int(body.total_score or 0)
+
     try:
         # Convert match items → SCALE tuple-vec
         match_tuples: List[List[int] | Tuple[List[int], List[int], int, int]] = []
@@ -429,7 +443,7 @@ def submit_proposal(body: SubmitProposalBody):
             call_function=_call_submit(),
             call_params={
                 "slot": int(body.slot),
-                "total_score": int(body.total_score),
+                "total_score": total_score,
                 matches_param_name: match_tuples,
             },
         )
@@ -463,7 +477,7 @@ def submit_proposal(body: SubmitProposalBody):
                         "receipt": str(getattr(receipt, "error_message", "")),
                     })
 
-                return {"ok": True, "hash": receipt.extrinsic_hash}
+                return {"ok": True, "submitted": True, "hash": receipt.extrinsic_hash}
 
             except SubstrateRequestException as e:
                 # Handle 1014 "Priority is too low"
@@ -718,7 +732,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
 
             # 3) Distance feasibility
             d_start = haversine_km(r.from_lat, r.from_lon, o.from_lat, o.from_lon)
-            d_end   = haversine_km(r.to_lat,   r.to_lon,   o.to_lat,   o.to_lon)
+            d_end   = haversine_km(r.to_lat, r.to_lon, o.to_lat, o.to_lon)
             d_total = d_start + d_end
 
             if max_start_km is not None and d_start > max_start_km:
