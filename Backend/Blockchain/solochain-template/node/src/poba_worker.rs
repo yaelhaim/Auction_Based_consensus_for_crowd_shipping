@@ -2,16 +2,13 @@
 //! then asks backend to submit signed extrinsics (submit_proposal / finalize_slot).
 
 use crate::service::FullClient;
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
+use std::{sync::Arc, time::Duration};
+use sc_client_api::HeaderBackend;
 use reqwest::Client as Http;
 use serde::{Deserialize, Serialize};
 use sp_api::ProvideRuntimeApi;
-// אין שימוש ב-BlockT כעת, אז לא צריך ג'נריקס.
-use log; // ודאי שב-Cargo.toml יש log = "0.4"
+use sp_runtime::traits::SaturatedConversion; // for best_number -> u64
+use log;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketRequest {
@@ -21,7 +18,7 @@ pub struct MarketRequest {
     pub to_lat: i32,
     pub to_lon: i32,
     pub max_price_cents: u32,
-    pub kind: u8, // 0=package,1=passenger
+    pub kind: u8, // 0=package, 1=passenger
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,20 +56,18 @@ struct BuildResp {
     matches: Vec<MatchItem>,
 }
 
-/// 6s per slot (dev). In prod עדיף לקבל את הסלוט מ-Aura.
-fn current_slot() -> u64 {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    ms / 6000
+/// Derive PoBA slot from the node's best block number.
+/// This keeps slot numbers small and easy to correlate with chain state.
+fn current_slot_from_client(client: &FullClient) -> u64 {
+    let info = client.info();
+    info.best_number.saturated_into::<u64>()
 }
 
 pub async fn run(
-    _client: Arc<FullClient>,
-    // מקבל כל pool wrapper (כולל TransactionPoolWrapper) — לא משתמשים בו כרגע.
+    client: Arc<FullClient>,
+    // Currently not using the transaction pool, but we keep the parameter for future use.
     _tx_pool: Arc<dyn Send + Sync>,
-    // מקבל כל keystore pointer — לא משתמשים בו כרגע.
+    // Currently not using the keystore, but we keep the parameter for future use.
     _keystore: impl Send + Sync + 'static,
     backend_url: String,
 ) {
@@ -100,13 +95,16 @@ pub async fn run(
         };
 
         // 2) Ask BACKEND to build proposal via IDA*
-        let slot = current_slot();
+        let slot = current_slot_from_client(&client);
+        log::info!("PoBA worker: using slot {} (from best block number)", slot);
+
         #[derive(serde::Serialize)]
         struct BuildBody<'a> {
             slot: u64,
             requests: &'a Vec<MarketRequest>,
             offers: &'a Vec<MarketOffer>,
         }
+
         let build_url = format!("{}/poba/build-proposal", backend_url);
         let resp = http
             .post(&build_url)
@@ -136,12 +134,16 @@ pub async fn run(
 
         // 3) Ask backend to submit signed extrinsic
         let submit_url = format!("{}/poba/submit-proposal", backend_url);
-        let body = SubmitProposalBody { slot, total_score, matches: matches.clone() };
+        let body = SubmitProposalBody {
+            slot,
+            total_score,
+            matches: matches.clone(),
+        };
         if let Err(e) = http.post(&submit_url).json(&body).send().await {
             log::warn!("PoBA worker: submit-proposal failed: {e}");
         }
 
-        // 4) Try finalize the slot (only the author’s call will land in-time)
+        // 4) Try finalize the slot (only the author's call should land in-time)
         let finalize_url = format!("{}/poba/finalize-slot", backend_url);
         let _ = http
             .post(&finalize_url)
@@ -149,6 +151,7 @@ pub async fn run(
             .send()
             .await;
 
-        tokio::time::sleep(Duration::from_secs(3)).await; // ~half slot
+        // Sleep for ~half a slot (your block time is ~6s, so 3s here is fine).
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
