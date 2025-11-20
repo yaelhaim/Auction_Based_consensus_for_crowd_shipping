@@ -61,8 +61,24 @@ def _param_matches() -> str:
     # Some chains use "matches", others "match_items" – make it configurable.
     return os.getenv("POBA_PARAM_MATCHES", "matches")
 
+def _escrow_pallet_name() -> str:
+    """
+    Name of the escrow pallet as it appears in construct_runtime!.
+    Default: 'Escrow'.
+    """
+    return os.getenv("ESCROW_PALLET", "Escrow")
+
+
+def _escrow_call_create() -> str:
+    """
+    Name of the create-escrow extrinsic in the Escrow pallet.
+    Default: 'create_escrow'.
+    """
+    return os.getenv("ESCROW_CALL_CREATE", "create_escrow")
+
 def _wait_for_finalization() -> bool:
     return os.getenv("POBA_WAIT_FINALIZATION", "0").lower() in {"1", "true", "yes"}
+
 
 def _finalization_timeout_sec() -> int:
     # kept only for debug visibility; not passed to substrate.submit_extrinsic
@@ -278,9 +294,44 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
     - Create assignments
     - Update requests.status='assigned'
     - Update courier_offers.status='assigned'
+    - (Optionally) create on-chain escrow entries per assignment
+
+    If ESCROW_ENABLE=1, the function will:
+      - Connect once to the chain
+      - For each created assignment, call Escrow::create_escrow
+        with (request_uuid, offer_uuid, driver_wallet, payer_wallet, amount_cents).
+
+    Escrow errors are logged but do NOT abort the DB operations.
     """
     if not matches:
-        return {"ok": True, "created": 0, "updated_requests": 0, "updated_offers": 0}
+        return {
+            "ok": True,
+            "created": 0,
+            "updated_requests": 0,
+            "updated_offers": 0,
+            "escrows_created": 0,
+        }
+
+    # Escrow toggle via env flag.
+    enable_escrow = os.getenv("ESCROW_ENABLE", "0").lower() in {"1", "true", "yes"}
+
+    substrate = None
+    signer = None
+    escrows_created = 0
+
+    if enable_escrow:
+        try:
+            substrate = get_substrate()
+            signer = get_signer()
+            log.info("Escrow integration enabled: pallet=%s call=%s",
+                     _escrow_pallet_name(), _escrow_call_create())
+        except HTTPException as e:
+            # If we fail to init chain client, we just log and continue without escrow.
+            log.warning("ESCROW_ENABLE=1 but failed to init chain client: %s", e.detail)
+            enable_escrow = False
+        except Exception as e:
+            log.warning("ESCROW_ENABLE=1 but failed to init chain client (generic): %s", e)
+            enable_escrow = False
 
     created = 0
     upd_r = 0
@@ -291,6 +342,7 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
             rq_uuid = _hex32_to_uuid(m.request_uuid)
             of_uuid = _hex32_to_uuid(m.offer_uuid)
         except Exception:
+            # If UUID conversion fails, skip this match entirely.
             continue
 
         # ✅ fix: CAST(:param AS uuid) instead of :param::uuid
@@ -304,7 +356,10 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
             WHERE r.id = CAST(:request_id AS uuid)
             LIMIT 1
         """)
-        row = db.execute(sel, {"request_id": str(rq_uuid), "offer_id": str(of_uuid)}).mappings().first()
+        row = db.execute(
+            sel,
+            {"request_id": str(rq_uuid), "offer_id": str(of_uuid)},
+        ).mappings().first()
         if not row:
             continue
 
@@ -312,16 +367,20 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
         offer_id = row["offer_id"]
         driver_user_id = row["driver_user_id"]
 
+        # Skip if there is already an active assignment for this request.
         exists = db.execute(
-            text("""SELECT 1 FROM assignments
-                    WHERE request_id = CAST(:rid AS uuid)
-                      AND status IN ('created','picked_up','in_transit')
-                    LIMIT 1"""),
+            text("""
+                SELECT 1 FROM assignments
+                WHERE request_id = CAST(:rid AS uuid)
+                  AND status IN ('created','picked_up','in_transit')
+                LIMIT 1
+            """),
             {"rid": request_id},
         ).first()
         if exists:
             continue
 
+        # Insert new assignment row.
         ins = text("""
             INSERT INTO assignments
               (request_id, driver_user_id, offer_id, status, assigned_at)
@@ -329,24 +388,113 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
               (CAST(:rid AS uuid), CAST(:duid AS uuid), CAST(:oid AS uuid), 'created', NOW())
             RETURNING id
         """)
-        arow = db.execute(ins, {"rid": request_id, "duid": driver_user_id, "oid": offer_id}).mappings().first()
+        arow = db.execute(
+            ins,
+            {"rid": request_id, "duid": driver_user_id, "oid": offer_id},
+        ).mappings().first()
         if arow:
             created += 1
 
+        # Update request status -> 'assigned'.
         db.execute(
             text("UPDATE requests SET status='assigned', updated_at=NOW() WHERE id = CAST(:rid AS uuid)"),
-            {"rid": request_id}
+            {"rid": request_id},
         )
         upd_r += 1
+
+        # Update courier offer status -> 'assigned'.
         db.execute(
             text("UPDATE courier_offers SET status='assigned', updated_at=NOW() WHERE id = CAST(:oid AS uuid)"),
-            {"oid": offer_id}
+            {"oid": offer_id},
         )
         upd_o += 1
 
-    db.commit()
-    return {"ok": True, "created": created, "updated_requests": upd_r, "updated_offers": upd_o}
+        # ---------------------- Escrow on-chain (optional) ----------------------
+        if enable_escrow and substrate is not None and signer is not None:
+            try:
+                # Fetch driver + payer wallet addresses from DB.
+                driver_row = db.execute(
+                    text("SELECT wallet_address AS driver_wallet FROM users WHERE id = CAST(:duid AS uuid)"),
+                    {"duid": driver_user_id},
+                ).mappings().first()
+                payer_row = db.execute(
+                    text("""
+                        SELECT u.wallet_address AS payer_wallet
+                        FROM requests r
+                        JOIN users u ON u.id = r.owner_user_id
+                        WHERE r.id = CAST(:rid AS uuid)
+                        LIMIT 1
+                    """),
+                    {"rid": request_id},
+                ).mappings().first()
 
+                if not driver_row or not payer_row:
+                    log.warning(
+                        "Escrow: missing driver or payer wallet for request_id=%s driver_user_id=%s",
+                        request_id,
+                        driver_user_id,
+                    )
+                else:
+                    driver_wallet = driver_row["driver_wallet"]
+                    payer_wallet = payer_row["payer_wallet"]
+                    amount_cents = int(m.agreed_price_cents)
+
+                    if not driver_wallet or not payer_wallet:
+                        log.warning(
+                            "Escrow: empty wallet address (driver=%s, payer=%s) for request_id=%s",
+                            driver_wallet,
+                            payer_wallet,
+                            request_id,
+                        )
+                    elif amount_cents <= 0:
+                        log.warning(
+                            "Escrow: non-positive amount_cents=%s for request_id=%s (skipping create_escrow)",
+                            amount_cents,
+                            request_id,
+                        )
+                    else:
+                        # request_uuid_hex16 / offer_uuid_hex16 = original hex32 strings from MatchItem
+                        escrow_hash = create_escrow_on_chain(
+                            substrate,
+                            signer,
+                            request_uuid_hex16=m.request_uuid,
+                            offer_uuid_hex16=m.offer_uuid,
+                            driver_wallet=driver_wallet,
+                            payer_wallet=payer_wallet,
+                            amount_cents=amount_cents,
+                        )
+                        escrows_created += 1
+                        log.info(
+                            "Escrow created on-chain: hash=%s request_uuid=%s offer_uuid=%s amount_cents=%s",
+                            escrow_hash,
+                            m.request_uuid,
+                            m.offer_uuid,
+                            amount_cents,
+                        )
+            except HTTPException as e:
+                # Do not break DB flow; just log the issue.
+                log.warning(
+                    "create_escrow_on_chain failed for request_id=%s: %s",
+                    request_id,
+                    getattr(e, "detail", e),
+                )
+            except Exception as e:
+                log.warning(
+                    "create_escrow_on_chain raised exception for request_id=%s: %s",
+                    request_id,
+                    e,
+                )
+
+    # Single commit at the end for all assignments/updates.
+    db.commit()
+
+    return {
+        "ok": True,
+        "created": created,
+        "updated_requests": upd_r,
+        "updated_offers": upd_o,
+        "escrows_created": escrows_created,
+    }
 
 # ------------------------------ Chain calls ------------------------------
 
@@ -383,6 +531,92 @@ def _submit_with_wait(substrate, extrinsic, *, label: str):
         except JSONDecodeError as e2:
             log.warning("%s: second inclusion wait failed (%s); sending without wait", label, e2)
             return substrate.submit_extrinsic(extrinsic, wait_for_inclusion=False)
+        
+def create_escrow_on_chain(
+    substrate: SubstrateInterface,
+    signer: Keypair,
+    *,
+    request_uuid_hex16: str,
+    offer_uuid_hex16: str,
+    driver_wallet: str,
+    payer_wallet: str,
+    amount_cents: int,
+) -> str:
+    """
+    Create an escrow on-chain for a single (request, offer) assignment.
+
+    Parameters:
+      - request_uuid_hex16: 32-hex (UUID without dashes)
+      - offer_uuid_hex16:   32-hex (UUID without dashes)
+      - driver_wallet:      SS58 address of the driver (users.wallet_address)
+      - payer_wallet:       SS58 address of the payer (request.owner_user_id → users.wallet_address)
+      - amount_cents:       logical amount for escrow (in cents). On-chain Balance is used as cents.
+
+    Returns:
+      - extrinsic hash (str) if successful
+    """
+    matches_param_name = _param_matches()  # not really needed here, but kept for symmetry/logging
+    pallet = _escrow_pallet_name()
+    call_fn = _escrow_call_create()
+
+    # Convert UUID hex → [u8; 16]
+    rq_u8 = hex16_to_u8_array_16(request_uuid_hex16)
+    of_u8 = hex16_to_u8_array_16(offer_uuid_hex16)
+
+    # We treat "amount" on-chain as CENTS, not chain UNITs.
+    amt = int(amount_cents)
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail={
+            "code": "escrow_zero_amount",
+            "hint": "Amount for escrow must be > 0 cents",
+        })
+
+    try:
+        call = substrate.compose_call(
+            call_module=pallet,
+            call_function=call_fn,
+            call_params={
+                "request_uuid": rq_u8,
+                "offer_uuid":   of_u8,
+                # substrate-interface will encode these as AccountId (SS58 strings).
+                "driver":       driver_wallet,
+                "payer":        payer_wallet,
+                "amount":       amt,
+            },
+        )
+        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
+        receipt = _submit_with_wait(substrate, extrinsic, label="create_escrow")
+        ok = getattr(receipt, "is_success", None)
+        log.info(
+            "create_escrow included/finalized: ok=%s hash=%s request=%s offer=%s amount_cents=%s",
+            ok,
+            getattr(receipt, "extrinsic_hash", None),
+            request_uuid_hex16,
+            offer_uuid_hex16,
+            amt,
+        )
+        if ok is False:
+            raise HTTPException(status_code=502, detail={
+                "code": "escrow_dispatch_failed",
+                "receipt": str(getattr(receipt, "error_message", "")),
+                "hint": "Check Escrow pallet error/event data",
+            })
+        return str(receipt.extrinsic_hash)
+    except HTTPException:
+        raise
+    except SubstrateRequestException as e:
+        log.exception("create_escrow RPC failed: %s", e)
+        raise HTTPException(status_code=502, detail={
+            "code": "escrow_rpc_failed",
+            "error": str(e),
+        })
+    except Exception as e:
+        log.exception("create_escrow failed: %s", e)
+        raise HTTPException(status_code=500, detail={
+            "code": "create_escrow_failed",
+            "error": str(e),
+        })
+
 
 @router.post("/submit-proposal")
 def submit_proposal(body: SubmitProposalBody):

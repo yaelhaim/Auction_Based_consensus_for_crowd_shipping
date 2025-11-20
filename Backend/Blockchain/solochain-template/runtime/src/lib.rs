@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use frame_support::construct_runtime;
+use frame_support::traits::Get;
 use sp_runtime::{
     generic, impl_opaque_keys,
     traits::{BlakeTwo256, IdentifyAccount, Verify},
@@ -114,6 +115,7 @@ construct_runtime!(
 
         // Our PoBA pallet
         PoBA: pallet_poba,
+        Escrow: pallet_escrow,
     }
 );
 
@@ -157,4 +159,19 @@ pub type Executive = frame_executive::Executive<
 // ----------------------------- PoBA pallet Config ---------------------------
 impl pallet_poba::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
+}
+
+
+// Helper type for Escrow timeout (e.g., 24 hours)
+pub struct EscrowConfirmationTimeout;
+impl Get<BlockNumber> for EscrowConfirmationTimeout {
+    fn get() -> BlockNumber {
+        HOURS * 24
+    }
+}
+
+impl pallet_escrow::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Balance = Balance;
+    type ConfirmationTimeoutBlocks = EscrowConfirmationTimeout;
 }
