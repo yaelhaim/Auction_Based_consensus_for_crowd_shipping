@@ -1,11 +1,18 @@
 # routes_sender.py
 # Sender dashboard API: metrics and request listing for the logged-in user.
-# Relies on JWT auth (auth_dep.get_current_user) and your 'requests' table schema.
+# Relies on JWT auth (auth_dep.get_current_user) and your 'requests' + 'assignments' tables.
+#
+# NOTE:
+#   list_requests now LEFT JOINs assignments to expose:
+#     - max_price  (sender's maximum willingness to pay, from requests.max_price)
+#     - agreed_price (final matched price, from assignments.agreed_price_cents / 100.0)
+#   The mobile app can use agreed_price when it exists, and fall back to max_price.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Dict, Any
+
 from .Database.db import get_db
 from .auth_dep import get_current_user  # returns dict of current user (incl. id)
 
@@ -14,6 +21,7 @@ router = APIRouter(prefix="/sender", tags=["sender"])
 # ---- CONFIG: which request.type values are considered "sender" requests ----
 # Adjust if your schema uses different names (e.g. 'delivery', 'parcel' etc.)
 SENDER_TYPES: List[str] = ["package"]
+
 
 def _status_bucket_to_sql_list(bucket: str) -> List[str]:
     """
@@ -84,6 +92,11 @@ def list_requests(
     """
     List the current user's *sender* requests filtered by a UI bucket.
     Returns only rows with type in SENDER_TYPES.
+
+    Additionally:
+      - max_price is returned from requests.max_price (numeric).
+      - agreed_price is returned from assignments.agreed_price_cents / 100.0
+        (LEFT JOIN; may be NULL if no assignment exists yet).
     """
     uid = me["id"]
     statuses = _status_bucket_to_sql_list(status)
@@ -100,33 +113,60 @@ def list_requests(
         **{f"t{i}": t for i, t in enumerate(SENDER_TYPES)},
     }
 
+    # We LEFT JOIN assignments to expose agreed_price_cents when there is an assignment.
+    # We aggregate with MAX() assuming at most one relevant assignment per request.
     rows = db.execute(
         text(f"""
             SELECT
-                id,
-                owner_user_id,
-                type,
-                from_address,
-                from_lat,
-                from_lon,
-                to_address,
-                to_lat,
-                to_lon,
-                passengers,
-                notes,
-                window_start,
-                window_end,
-                status,
-                created_at,
-                updated_at
-            FROM requests
-            WHERE owner_user_id = :uid
-              AND type IN ({type_placeholders})
-              AND status IN ({status_placeholders})
-            ORDER BY created_at DESC
+                r.id::text           AS id,
+                r.owner_user_id::text AS owner_user_id,
+                r.type::text         AS type,
+                r.from_address,
+                r.from_lat,
+                r.from_lon,
+                r.to_address,
+                r.to_lat,
+                r.to_lon,
+                r.passengers,
+                r.notes,
+                r.window_start,
+                r.window_end,
+                r.status::text       AS status,
+                r.max_price::numeric AS max_price,
+                MAX(a.agreed_price_cents)::numeric / 100.0 AS agreed_price,
+                r.created_at,
+                r.updated_at
+            FROM requests r
+            LEFT JOIN assignments a
+              ON a.request_id = r.id
+             AND a.status IN ('created','picked_up','in_transit','completed')
+            WHERE r.owner_user_id = :uid
+              AND r.type IN ({type_placeholders})
+              AND r.status IN ({status_placeholders})
+            GROUP BY
+                r.id,
+                r.owner_user_id,
+                r.type,
+                r.from_address,
+                r.from_lat,
+                r.from_lon,
+                r.to_address,
+                r.to_lat,
+                r.to_lon,
+                r.passengers,
+                r.notes,
+                r.window_start,
+                r.window_end,
+                r.status,
+                r.max_price,
+                r.created_at,
+                r.updated_at
+            ORDER BY r.created_at DESC
             LIMIT :limit OFFSET :offset
         """),
         params,
     ).mappings().all()
 
+    # We let FastAPI handle datetime → ISO conversion.
+    # dict(row) already includes max_price (Decimal) and agreed_price (numeric/float-compatible).
     return [dict(r) for r in rows]

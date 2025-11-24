@@ -10,6 +10,10 @@
 # Added:
 #   POST /courier/offers
 #   GET  /courier/offers?status=active|paused|completed|cancelled&limit=50&offset=0
+#
+# NOTE:
+#   For status=active|delivered we now also SELECT assignments.agreed_price_cents
+#   and expose it as `agreed_price` (in currency units, e.g. NIS) to the mobile app.
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Literal, List, Optional
@@ -24,15 +28,18 @@ from .auth_dep import get_current_user
 
 router = APIRouter(prefix="/courier", tags=["courier"])
 
+
 def _iso(dt):
+    """Convert datetime to ISO string (or None)."""
     return dt.isoformat() if dt else None
+
 
 # ------------------------------ Metrics -------------------------------------
 
 @router.get("/metrics")
 def courier_metrics(
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
     q_available = text("""
         SELECT COUNT(*) AS c
@@ -70,18 +77,24 @@ def courier_metrics(
         "delivered_count": int(delivered),
     }
 
+
 # ------------------------------- Jobs List ----------------------------------
 
 @router.get("/jobs")
 def courier_jobs(
-    status: Literal["available","active","delivered"] = Query("available"),
+    status: Literal["available", "active", "delivered"] = Query("available"),
     respect_offers: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
+    """
+    List jobs for the logged-in courier.
+    For active/delivered buckets we also expose `agreed_price` (float) based on assignments.agreed_price_cents.
+    """
     if status == "available":
+        # Available jobs have no assignment yet → no agreed_price here.
         if respect_offers:
             q = text("""
                 SELECT
@@ -133,6 +146,7 @@ def courier_jobs(
         params = {"uid": me["id"], "limit": limit, "offset": offset}
 
     elif status == "active":
+        # Active jobs for this driver. We join assignments to retrieve agreed_price_cents.
         q = text("""
             SELECT
               r.id::text AS id,
@@ -143,7 +157,8 @@ def courier_jobs(
               r.window_start,
               r.window_end,
               r.notes,
-              r.created_at
+              r.created_at,
+              (a.agreed_price_cents::numeric / 100.0) AS agreed_price
             FROM assignments a
             JOIN requests r ON r.id = a.request_id
             WHERE a.driver_user_id = :uid
@@ -154,6 +169,7 @@ def courier_jobs(
         params = {"uid": me["id"], "limit": limit, "offset": offset}
 
     else:  # delivered
+        # Completed jobs for this driver, with final agreed_price.
         q = text("""
             SELECT
               r.id::text AS id,
@@ -164,7 +180,8 @@ def courier_jobs(
               r.window_start,
               r.window_end,
               r.notes,
-              r.created_at
+              r.created_at,
+              (a.agreed_price_cents::numeric / 100.0) AS agreed_price
             FROM assignments a
             JOIN requests r ON r.id = a.request_id
             WHERE a.driver_user_id = :uid
@@ -185,6 +202,8 @@ def courier_jobs(
             "to_address": r["to_address"],
             "window_start": _iso(r["window_start"]),
             "window_end": _iso(r["window_end"]),
+            # New: agreed_price (only for active/delivered; None for available)
+            "agreed_price": float(r["agreed_price"]) if "agreed_price" in r and r["agreed_price"] is not None else None,
             "distance_km": None,
             "suggested_pay": None,
             "notes": r["notes"],
@@ -193,14 +212,20 @@ def courier_jobs(
         for r in rows
     ]
 
+
 # ------------------------------ Job Actions ---------------------------------
 
 @router.post("/jobs/{job_id}/accept")
 def courier_accept_job(
     job_id: str,
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
+    """
+    Manual accept of a single open request by a courier.
+    This path does NOT set agreed_price_cents (it will remain NULL),
+    which is fine for manual, off-PoBA assignments.
+    """
     chk = text("""
         SELECT r.id
         FROM requests r
@@ -234,11 +259,12 @@ def courier_accept_job(
     db.commit()
     return {"ok": True, "job_id": job_id, "assignment_id": arow["id"]}
 
+
 @router.post("/jobs/{job_id}/start")
 def courier_start_job(
     job_id: str,
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
     sel = text("""
         SELECT a.id
@@ -270,11 +296,12 @@ def courier_start_job(
     db.commit()
     return {"ok": True, "job_id": job_id}
 
+
 @router.post("/jobs/{job_id}/delivered")
 def courier_delivered_job(
     job_id: str,
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
     sel = text("""
         SELECT a.id
@@ -306,13 +333,14 @@ def courier_delivered_job(
     db.commit()
     return {"ok": True, "job_id": job_id}
 
+
 # --------------------------- Courier Offers (NEW) ---------------------------
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     from_address: str = Field(..., min_length=3, max_length=255)
-    to_address: Optional[str] = Field(None, max_length=255)  # None = כל יעד
+    to_address: Optional[str] = Field(None, max_length=255)  # None = any destination
     window_start: datetime
     window_end: datetime
     min_price: Decimal = Field(..., gt=0)
@@ -327,12 +355,16 @@ class OfferCreate(BaseModel):
             raise ValueError("window_end must be after window_start")
         return v
 
+
 @router.post("/offers", status_code=201)
 def create_courier_offer(
     payload: OfferCreate,
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
+    """
+    Create a courier offer row.
+    """
     sql = text("""
         INSERT INTO courier_offers (
           driver_user_id,
@@ -360,14 +392,18 @@ def create_courier_offer(
     db.commit()
     return {"id": row["id"], "status": row["status"], "created_at": _iso(row["created_at"])}
 
+
 @router.get("/offers")
 def list_my_offers(
     status: Optional[str] = Query(None),  # active | paused | completed | cancelled
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    me = Depends(get_current_user),
+    me=Depends(get_current_user),
 ):
+    """
+    List offers for the logged-in courier.
+    """
     base = """
         SELECT
           id::text AS id,

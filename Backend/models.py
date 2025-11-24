@@ -33,6 +33,17 @@ bid_status_enum         = SAEnum("committed", "revealed", "won", "lost", "cancel
 assignment_status_enum  = SAEnum("created", "picked_up", "in_transit", "completed", "failed", "cancelled", name="assignment_status")
 proof_type_enum         = SAEnum("photo", "signature", "note", name="proof_type")
 
+# New: shared payment status enum for assignments.payment_status + escrows.status
+payment_status_enum = SAEnum(
+    "pending_deposit",
+    "deposited",
+    "released",
+    "refunded",
+    "failed",
+    "cancelled",
+    name="payment_status_enum",
+)
+
 # ------------------------------------------------------------------------------
 # Users
 # ------------------------------------------------------------------------------
@@ -244,8 +255,18 @@ class Assignments(Base):
     driver_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     offer_id       = Column(PG_UUID(as_uuid=True), ForeignKey("courier_offers.id"), nullable=True)  # link to offer
 
+    # Agreed price for this assignment in cents (already inserted by PoBA apply)
+    agreed_price_cents = Column(Integer, nullable=False)
+
     assigned_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     status         = Column(assignment_status_enum, nullable=False)
+
+    # New: payment_status, decoupled from logistics status
+    payment_status = Column(
+        payment_status_enum,
+        nullable=False,
+        server_default="pending_deposit",
+    )
 
     onchain_tx_hash = Column(String)
 
@@ -270,7 +291,6 @@ class Assignments(Base):
         back_populates="driver_assignments",
         foreign_keys=[driver_user_id],
     )
-    # ✅ the three relationships that were missing and caused mapper errors:
     escrow = relationship(
         "Escrows",
         uselist=False,
@@ -292,7 +312,11 @@ class Assignments(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Assignment id={self.id} req={self.request_id} driver={self.driver_user_id} status={self.status}>"
+        return (
+            f"<Assignment id={self.id} req={self.request_id} "
+            f"driver={self.driver_user_id} status={self.status} "
+            f"payment_status={self.payment_status} price_cents={self.agreed_price_cents}>"
+        )
 
 # ------------------------------------------------------------------------------
 # Escrows
@@ -304,14 +328,26 @@ class Escrows(Base):
         UniqueConstraint("assignment_id", name="uq_escrows_assignment"),
     )
 
-    id              = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    assignment_id   = Column(PG_UUID(as_uuid=True), ForeignKey("assignments.id"), nullable=False)
-    amount          = Column(Numeric(10, 2), nullable=False)
-    deposit_tx_hash = Column(String)
-    release_tx_hash = Column(String)
+    id            = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id = Column(PG_UUID(as_uuid=True), ForeignKey("assignments.id"), nullable=False)
 
-    created_at      = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at      = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # New: logical payer/payee and amount in cents
+    payer_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    payee_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    amount_cents  = Column(Integer, nullable=False)
+
+    # Optional on-chain id + tx hashes
+    onchain_escrow_id = Column(Integer)   # maps to EscrowId (u64) if used
+    deposit_tx_hash   = Column(String)
+    release_tx_hash   = Column(String)
+    refund_tx_hash    = Column(String)
+
+    # Shared payment status enum
+    status        = Column(payment_status_enum, nullable=False, server_default="pending_deposit")
+
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     assignment = relationship(
@@ -319,6 +355,20 @@ class Escrows(Base):
         back_populates="escrow",
         foreign_keys=[assignment_id],
     )
+    payer = relationship(
+        "Users",
+        foreign_keys=[payer_user_id],
+    )
+    payee = relationship(
+        "Users",
+        foreign_keys=[payee_user_id],
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Escrow id={self.id} assignment={self.assignment_id} "
+            f"amount_cents={self.amount_cents} status={self.status}>"
+        )
 
 # ------------------------------------------------------------------------------
 # Proofs (delivery proofs)
@@ -396,4 +446,5 @@ __all__ = [
     "User", "LoginNonce", "Request", "Bid", "CourierOffer", "Assignment", "Escrow", "Proof", "Rating",
     "user_role_enum", "request_type_enum", "request_status_enum",
     "bid_status_enum", "assignment_status_enum", "proof_type_enum",
+    "payment_status_enum",
 ]

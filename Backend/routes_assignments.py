@@ -59,6 +59,10 @@ class AssignmentDetailOut(BaseModel):
     assignment_id: str
     request_id: str
     status: str
+    # New: payment status + agreed price
+    payment_status: Optional[str] = None
+    agreed_price_cents: Optional[int] = None
+
     assigned_at: datetime
     picked_up_at: Optional[datetime] = None
     in_transit_at: Optional[datetime] = None
@@ -178,10 +182,23 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
     if assigned_at.tzinfo is None:
         assigned_at = assigned_at.replace(tzinfo=timezone.utc)
 
+    # Normalize payment status
+    ps = getattr(assignment, "payment_status", None)
+    ps_str = str(ps) if ps is not None else None
+
+    # Normalize price cents
+    price_cents: Optional[int]
+    try:
+        price_cents = int(getattr(assignment, "agreed_price_cents", 0)) if assignment.agreed_price_cents is not None else None
+    except Exception:
+        price_cents = None
+
     return AssignmentDetailOut(
         assignment_id=str(assignment.id),
         request_id=str(assignment.request_id),
         status=str(assignment.status),
+        payment_status=ps_str,
+        agreed_price_cents=price_cents,
         assigned_at=assigned_at,
         picked_up_at=_ensure_tz(getattr(assignment, "picked_up_at", None)),
         in_transit_at=_ensure_tz(getattr(assignment, "in_transit_at", None)),
@@ -227,6 +244,10 @@ class RecentMatchItem(BaseModel):
     driver_user_id: str
     assigned_at: datetime
     status: str
+    # New (optional) for debugging:
+    payment_status: Optional[str] = None
+    agreed_price_cents: Optional[int] = None
+
     request_type: Optional[str] = None
     from_address: Optional[str] = None
     to_address: Optional[str] = None
@@ -252,6 +273,14 @@ def list_recent_matches(limit: int = 50, db: Session = Depends(get_db)):
             if rq:
                 requester_name = f"{getattr(rq,'first_name','') or ''} {getattr(rq,'last_name','') or ''}".strip() or None
         driver_name = f"{getattr(driver,'first_name','') or ''} {getattr(driver,'last_name','') or ''}".strip() or None
+
+        ps = getattr(a, "payment_status", None)
+        ps_str = str(ps) if ps is not None else None
+        try:
+            price_cents = int(getattr(a, "agreed_price_cents", 0)) if a.agreed_price_cents is not None else None
+        except Exception:
+            price_cents = None
+
         out.append(
             RecentMatchItem(
                 assignment_id=str(a.id),
@@ -259,6 +288,8 @@ def list_recent_matches(limit: int = 50, db: Session = Depends(get_db)):
                 driver_user_id=str(a.driver_user_id),
                 assigned_at=_ensure_tz(a.assigned_at) or datetime.now(timezone.utc),
                 status=str(a.status),
+                payment_status=ps_str,
+                agreed_price_cents=price_cents,
                 request_type=_normalize_request_type(getattr(req, "type", None)),
                 from_address=getattr(req, "from_address", None),
                 to_address=getattr(req, "to_address", None),

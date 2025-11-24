@@ -272,12 +272,29 @@ function SenderCard({ it }: { it: RequestRow }) {
     ]) ?? pickAny(it, ["assignment.driver.full_name"]);
   const senderName = pickAny(it, ["sender_name", "requester_name"]);
   const riderName = pickAny(it, ["rider_name"]);
-  const price = pickAny(it, [
-    "agreed_price",
-    "price",
-    "max_price",
-    "min_price",
-  ]);
+
+  // Price logic:
+  // 1) Prefer agreed_price_cents (DB+chain agreed price, in cents)
+  // 2) Fallback to agreed_price / price / max_price / min_price (in NIS)
+  const agreedCents = pickAny(it, ["agreed_price_cents"]);
+  let priceValue: number | null = null;
+
+  if (agreedCents != null) {
+    priceValue = Number(agreedCents) / 100;
+  } else {
+    const fallback = pickAny(it, [
+      "agreed_price",
+      "price",
+      "max_price",
+      "min_price",
+    ]);
+    priceValue = fallback != null ? Number(fallback) : null;
+  }
+
+  const priceText =
+    priceValue != null && !Number.isNaN(priceValue)
+      ? `₪${priceValue.toFixed(2)}`
+      : "—";
 
   return (
     <View style={S.wrap}>
@@ -295,7 +312,7 @@ function SenderCard({ it }: { it: RequestRow }) {
         </View>
 
         <Line label="סוג" value={it.type === "package" ? "חבילה" : "טרמפ"} />
-        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        <Line label="מחיר" value={priceText} />
         {driverName ? <Line label="שליח" value={String(driverName)} /> : null}
         {senderName ? <Line label="שולח" value={String(senderName)} /> : null}
         {riderName ? <Line label="נוסע" value={String(riderName)} /> : null}
@@ -310,12 +327,28 @@ function SenderCard({ it }: { it: RequestRow }) {
 function RiderCard({ it }: { it: RiderRequestRow }) {
   const status = statusLabelRider(it.status);
   const win = windowRangeText(it.window_start, it.window_end);
-  const price = pickAny(it, [
-    "agreed_price",
-    "price",
-    "max_price",
-    "min_price",
-  ]);
+
+  // Price logic identical to SenderCard
+  const agreedCents = pickAny(it, ["agreed_price_cents"]);
+  let priceValue: number | null = null;
+
+  if (agreedCents != null) {
+    priceValue = Number(agreedCents) / 100;
+  } else {
+    const fallback = pickAny(it, [
+      "agreed_price",
+      "price",
+      "max_price",
+      "min_price",
+    ]);
+    priceValue = fallback != null ? Number(fallback) : null;
+  }
+
+  const priceText =
+    priceValue != null && !Number.isNaN(priceValue)
+      ? `₪${priceValue.toFixed(2)}`
+      : "—";
+
   const driverName = pickAny(it, [
     "driver_name",
     "driver_full_name",
@@ -343,7 +376,7 @@ function RiderCard({ it }: { it: RiderRequestRow }) {
           label="נוסעים"
           value={it?.passengers != null ? String(it.passengers) : "—"}
         />
-        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        <Line label="מחיר" value={priceText} />
         {driverName ? <Line label="נהג" value={String(driverName)} /> : null}
         {riderName ? <Line label="נוסע" value={String(riderName)} /> : null}
         {it?.notes ? (
@@ -357,13 +390,29 @@ function RiderCard({ it }: { it: RiderRequestRow }) {
 function CourierJobCard({ it }: { it: CourierJobRow }) {
   const status = statusLabelCourier(it.status);
   const win = windowRangeText(it.window_start, it.window_end);
-  const price = pickAny(it, [
-    "agreed_price",
-    "price",
-    "suggested_pay",
-    "min_price",
-    "max_price",
-  ]);
+
+  // Price logic identical: prefer agreed_price_cents, fallback to other fields
+  const agreedCents = pickAny(it, ["agreed_price_cents"]);
+  let priceValue: number | null = null;
+
+  if (agreedCents != null) {
+    priceValue = Number(agreedCents) / 100;
+  } else {
+    const fallback = pickAny(it, [
+      "agreed_price",
+      "price",
+      "suggested_pay",
+      "min_price",
+      "max_price",
+    ]);
+    priceValue = fallback != null ? Number(fallback) : null;
+  }
+
+  const priceText =
+    priceValue != null && !Number.isNaN(priceValue)
+      ? `₪${priceValue.toFixed(2)}`
+      : "—";
+
   const driverName = pickAny(it, [
     "courier_name",
     "driver_name",
@@ -392,7 +441,7 @@ function CourierJobCard({ it }: { it: CourierJobRow }) {
         </View>
 
         <Line label="סוג" value={it.type === "package" ? "חבילה" : "טרמפ"} />
-        <Line label="מחיר" value={price != null ? `₪${price}` : "—"} />
+        <Line label="מחיר" value={priceText} />
         {driverName ? <Line label="שליח" value={String(driverName)} /> : null}
         {customerName ? (
           <Line label="לקוח" value={String(customerName)} />

@@ -75,6 +75,15 @@ export type CommonStatus =
   | "completed"
   | "cancelled";
 
+/** Shared payment status used by assignments.payment_status and escrows.status. */
+export type PaymentStatus =
+  | "pending_deposit"
+  | "deposited"
+  | "released"
+  | "refunded"
+  | "failed"
+  | "cancelled";
+
 function normalizeStatus(s: string): CommonStatus {
   return s === "matched" ? "assigned" : (s as CommonStatus);
 }
@@ -679,6 +688,10 @@ export type AssignmentDetailOut = {
   assignment_id: string;
   request_id: string;
   status: string;
+  // New: payment status + agreed price (in cents)
+  payment_status?: PaymentStatus;
+  agreed_price_cents?: number | null;
+
   assigned_at: string; // ISO
   picked_up_at?: string | null;
   in_transit_at?: string | null;
@@ -759,5 +772,38 @@ export async function runMatchingForRequest(token: string, requestId: string) {
   >(`${BASE_URL}/match/requests/${encodeURIComponent(requestId)}/run`, {
     method: "POST",
     headers: { ...authHeaders(token) },
+  });
+}
+
+/* ------------------------------- Escrows (payments) ------------------------------- */
+
+export type EscrowRow = {
+  id: string;
+  assignment_id: string;
+  payer_user_id: string;
+  payee_user_id: string;
+  amount_cents: number;
+  status: PaymentStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Initiate an escrow for a given assignment.
+ * Called when the sender taps "Pay" (or similar).
+ * Only the request owner is allowed by the backend.
+ */
+export async function initiateEscrow(
+  token: string,
+  assignmentId: string
+): Promise<EscrowRow> {
+  return jsonFetch<EscrowRow>(`${BASE_URL}/escrows/initiate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    timeoutMs: 12000,
+    body: JSON.stringify({ assignment_id: assignmentId }),
   });
 }

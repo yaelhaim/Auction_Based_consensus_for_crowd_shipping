@@ -32,6 +32,7 @@ from .routes_auction import router as auction_router
 from .routes_assignments import router as assignments_router
 from .routes_matching import router as matching_router
 from .routes_poba import router as poba_router
+from .routes_escrow import router as escrow_router
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -172,3 +173,4 @@ app.include_router(auction_router)
 app.include_router(assignments_router)
 app.include_router(matching_router)
 app.include_router(poba_router)
+app.include_router(escrow_router)

@@ -44,22 +44,28 @@ log = logging.getLogger("poba")
 def _ws_url() -> str:
     return os.getenv("SUBSTRATE_WS_URL", "ws://127.0.0.1:9944")
 
+
 def _type_registry_preset() -> str:
     return os.getenv("SUBSTRATE_TYPE_REGISTRY_PRESET", "substrate-node-template")
+
 
 def _pallet_name() -> str:
     # IMPORTANT: the module name as appears in construct_runtime! is "PoBA"
     return os.getenv("POBA_PALLET", "PoBA")
 
+
 def _call_submit() -> str:
     return os.getenv("POBA_CALL_SUBMIT", "submit_proposal")
+
 
 def _call_finalize() -> str:
     return os.getenv("POBA_CALL_FINALIZE", "finalize_slot")
 
+
 def _param_matches() -> str:
     # Some chains use "matches", others "match_items" – make it configurable.
     return os.getenv("POBA_PARAM_MATCHES", "matches")
+
 
 def _escrow_pallet_name() -> str:
     """
@@ -76,6 +82,7 @@ def _escrow_call_create() -> str:
     """
     return os.getenv("ESCROW_CALL_CREATE", "create_escrow")
 
+
 def _wait_for_finalization() -> bool:
     return os.getenv("POBA_WAIT_FINALIZATION", "0").lower() in {"1", "true", "yes"}
 
@@ -89,12 +96,15 @@ def _finalization_timeout_sec() -> int:
 
 Hex32 = Annotated[str, Field(min_length=32, max_length=32, pattern=r"^[0-9a-fA-F]{32}$")]
 
+
 def uuid_to_16_hex(u: UUID) -> str:
     return u.hex
+
 
 def _hex32_to_uuid(s: str) -> UUID:
     # 32-hex (no dashes) -> UUID
     return UUID(hex=s)
+
 
 def hex16_to_u8_array_16(s: str) -> List[int]:
     try:
@@ -112,6 +122,7 @@ def hex16_to_u8_array_16(s: str) -> List[int]:
             "got": len(b),
         })
     return list(b)
+
 
 def get_substrate() -> SubstrateInterface:
     url = _ws_url()
@@ -132,6 +143,7 @@ def get_substrate() -> SubstrateInterface:
             "error": str(e),
             "hint": "Ensure node is running with WS on the given URL",
         })
+
 
 def get_signer() -> Keypair:
     uri = os.getenv("SUBSTRATE_SIGNER_URI")
@@ -174,6 +186,7 @@ class MarketRequest(BaseModel):
     window_start: int
     window_end: int
 
+
 class MarketOffer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     uuid_16: Hex32
@@ -186,12 +199,14 @@ class MarketOffer(BaseModel):
     window_end: int
     types_mask: int
 
+
 class MatchItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     request_uuid: Hex32
-    offer_uuid:   Hex32
+    offer_uuid: Hex32
     agreed_price_cents: int
     partial_score: int
+
 
 class SubmitProposalBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -200,9 +215,11 @@ class SubmitProposalBody(BaseModel):
     total_score: int = 0
     matches: List[MatchItem]
 
+
 class FinalizeBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
     slot: Annotated[int, Field(ge=0)]
+
 
 class BuildBody(BaseModel):
     """
@@ -218,6 +235,7 @@ class BuildBody(BaseModel):
     max_start_km: Optional[float] = Field(default=None, ge=0)
     max_end_km: Optional[float] = Field(default=None, ge=0)
     max_total_km: Optional[float] = Field(default=None, ge=0)
+
 
 class BuildResp(BaseModel):
     slot: int
@@ -254,6 +272,7 @@ def requests_open(db: Session = Depends(get_db)) -> List[MarketRequest]:
         ))
     return out
 
+
 def _offers_active_impl(db: Session) -> List[MarketOffer]:
     rows = (
         db.query(CourierOffer)
@@ -277,9 +296,11 @@ def _offers_active_impl(db: Session) -> List[MarketOffer]:
         ))
     return out
 
+
 @router.get("/offers-active", response_model=List[MarketOffer])
 def offers_active(db: Session = Depends(get_db)) -> List[MarketOffer]:
     return _offers_active_impl(db)
+
 
 @router.get("/offers-open", response_model=List[MarketOffer])
 def offers_open_compat(db: Session = Depends(get_db)) -> List[MarketOffer]:
@@ -294,58 +315,45 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
     - Create assignments
     - Update requests.status='assigned'
     - Update courier_offers.status='assigned'
-    - (Optionally) create on-chain escrow entries per assignment
 
-    If ESCROW_ENABLE=1, the function will:
-      - Connect once to the chain
-      - For each created assignment, call Escrow::create_escrow
-        with (request_uuid, offer_uuid, driver_wallet, payer_wallet, amount_cents).
-
-    Escrow errors are logged but do NOT abort the DB operations.
+    NOTE:
+    On-chain escrow creation is now handled by `/escrows/initiate` when the
+    payer clicks "continue to payment" in the app. This helper ONLY updates
+    the relational DB and does NOT call the Escrow pallet anymore.
     """
+    print("[ESCROW DEBUG] entered _apply_matches_to_db, matches count =", len(matches))
+
     if not matches:
+        print("[ESCROW DEBUG] no matches → nothing to apply")
         return {
             "ok": True,
             "created": 0,
             "updated_requests": 0,
             "updated_offers": 0,
-            "escrows_created": 0,
+            "escrows_created": 0,  # kept for backward compatibility
         }
-
-    # Escrow toggle via env flag.
-    enable_escrow = os.getenv("ESCROW_ENABLE", "0").lower() in {"1", "true", "yes"}
-
-    substrate = None
-    signer = None
-    escrows_created = 0
-
-    if enable_escrow:
-        try:
-            substrate = get_substrate()
-            signer = get_signer()
-            log.info("Escrow integration enabled: pallet=%s call=%s",
-                     _escrow_pallet_name(), _escrow_call_create())
-        except HTTPException as e:
-            # If we fail to init chain client, we just log and continue without escrow.
-            log.warning("ESCROW_ENABLE=1 but failed to init chain client: %s", e.detail)
-            enable_escrow = False
-        except Exception as e:
-            log.warning("ESCROW_ENABLE=1 but failed to init chain client (generic): %s", e)
-            enable_escrow = False
 
     created = 0
     upd_r = 0
     upd_o = 0
 
     for m in matches:
+        print(
+            "[ESCROW DEBUG] processing match:",
+            "req=", m.request_uuid,
+            "offer=", m.offer_uuid,
+            "agreed_price_cents=", m.agreed_price_cents,
+        )
+
+        # Convert hex32 → UUIDs
         try:
             rq_uuid = _hex32_to_uuid(m.request_uuid)
             of_uuid = _hex32_to_uuid(m.offer_uuid)
-        except Exception:
-            # If UUID conversion fails, skip this match entirely.
+        except Exception as e:
+            print("[ESCROW DEBUG] invalid UUID in match, skipping:", repr(e))
             continue
 
-        # ✅ fix: CAST(:param AS uuid) instead of :param::uuid
+        # Look up the (request, offer, driver_user_id) triple in DB
         sel = text("""
             SELECT
                 r.id::text AS request_id,
@@ -361,13 +369,22 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
             {"request_id": str(rq_uuid), "offer_id": str(of_uuid)},
         ).mappings().first()
         if not row:
+            print("[ESCROW DEBUG] no (request, offer) row found for match, skipping")
             continue
 
         request_id = row["request_id"]
         offer_id = row["offer_id"]
         driver_user_id = row["driver_user_id"]
+        print(
+            "[ESCROW DEBUG] DB pair found: request_id=",
+            request_id,
+            "offer_id=",
+            offer_id,
+            "driver_user_id=",
+            driver_user_id,
+        )
 
-        # Skip if there is already an active assignment for this request.
+        # Skip if an active assignment already exists for this request
         exists = db.execute(
             text("""
                 SELECT 1 FROM assignments
@@ -378,123 +395,85 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
             {"rid": request_id},
         ).first()
         if exists:
+            print(
+                "[ESCROW DEBUG] assignment already exists for request",
+                request_id,
+                "→ skipping",
+            )
             continue
 
-        # Insert new assignment row.
+        # Insert the assignment row
         ins = text("""
             INSERT INTO assignments
-              (request_id, driver_user_id, offer_id, status, assigned_at)
+              (request_id, driver_user_id, offer_id, agreed_price_cents, status, assigned_at)
             VALUES
-              (CAST(:rid AS uuid), CAST(:duid AS uuid), CAST(:oid AS uuid), 'created', NOW())
+              (
+                CAST(:rid AS uuid),
+                CAST(:duid AS uuid),
+                CAST(:oid AS uuid),
+                :agreed_price_cents,
+                'created',
+                NOW()
+              )
             RETURNING id
         """)
         arow = db.execute(
             ins,
-            {"rid": request_id, "duid": driver_user_id, "oid": offer_id},
+            {
+                "rid": request_id,
+                "duid": driver_user_id,
+                "oid": offer_id,
+                "agreed_price_cents": int(m.agreed_price_cents),
+            },
         ).mappings().first()
         if arow:
             created += 1
+            print("[ESCROW DEBUG] assignment created, id =", arow["id"])
 
-        # Update request status -> 'assigned'.
+        # Update request status → 'assigned'
         db.execute(
-            text("UPDATE requests SET status='assigned', updated_at=NOW() WHERE id = CAST(:rid AS uuid)"),
+            text(
+                "UPDATE requests SET status='assigned', updated_at=NOW() "
+                "WHERE id = CAST(:rid AS uuid)"
+            ),
             {"rid": request_id},
         )
         upd_r += 1
 
-        # Update courier offer status -> 'assigned'.
+        # Update courier offer status → 'assigned'
         db.execute(
-            text("UPDATE courier_offers SET status='assigned', updated_at=NOW() WHERE id = CAST(:oid AS uuid)"),
+            text(
+                "UPDATE courier_offers SET status='assigned', updated_at=NOW() "
+                "WHERE id = CAST(:oid AS uuid)"
+            ),
             {"oid": offer_id},
         )
         upd_o += 1
 
-        # ---------------------- Escrow on-chain (optional) ----------------------
-        if enable_escrow and substrate is not None and signer is not None:
-            try:
-                # Fetch driver + payer wallet addresses from DB.
-                driver_row = db.execute(
-                    text("SELECT wallet_address AS driver_wallet FROM users WHERE id = CAST(:duid AS uuid)"),
-                    {"duid": driver_user_id},
-                ).mappings().first()
-                payer_row = db.execute(
-                    text("""
-                        SELECT u.wallet_address AS payer_wallet
-                        FROM requests r
-                        JOIN users u ON u.id = r.owner_user_id
-                        WHERE r.id = CAST(:rid AS uuid)
-                        LIMIT 1
-                    """),
-                    {"rid": request_id},
-                ).mappings().first()
+        # NOTE:
+        # We deliberately DO NOT create any on-chain escrow here anymore.
+        # Escrow rows (DB + chain) are created later via /escrows/initiate,
+        # when the payer explicitly clicks the payment button in the app.
 
-                if not driver_row or not payer_row:
-                    log.warning(
-                        "Escrow: missing driver or payer wallet for request_id=%s driver_user_id=%s",
-                        request_id,
-                        driver_user_id,
-                    )
-                else:
-                    driver_wallet = driver_row["driver_wallet"]
-                    payer_wallet = payer_row["payer_wallet"]
-                    amount_cents = int(m.agreed_price_cents)
-
-                    if not driver_wallet or not payer_wallet:
-                        log.warning(
-                            "Escrow: empty wallet address (driver=%s, payer=%s) for request_id=%s",
-                            driver_wallet,
-                            payer_wallet,
-                            request_id,
-                        )
-                    elif amount_cents <= 0:
-                        log.warning(
-                            "Escrow: non-positive amount_cents=%s for request_id=%s (skipping create_escrow)",
-                            amount_cents,
-                            request_id,
-                        )
-                    else:
-                        # request_uuid_hex16 / offer_uuid_hex16 = original hex32 strings from MatchItem
-                        escrow_hash = create_escrow_on_chain(
-                            substrate,
-                            signer,
-                            request_uuid_hex16=m.request_uuid,
-                            offer_uuid_hex16=m.offer_uuid,
-                            driver_wallet=driver_wallet,
-                            payer_wallet=payer_wallet,
-                            amount_cents=amount_cents,
-                        )
-                        escrows_created += 1
-                        log.info(
-                            "Escrow created on-chain: hash=%s request_uuid=%s offer_uuid=%s amount_cents=%s",
-                            escrow_hash,
-                            m.request_uuid,
-                            m.offer_uuid,
-                            amount_cents,
-                        )
-            except HTTPException as e:
-                # Do not break DB flow; just log the issue.
-                log.warning(
-                    "create_escrow_on_chain failed for request_id=%s: %s",
-                    request_id,
-                    getattr(e, "detail", e),
-                )
-            except Exception as e:
-                log.warning(
-                    "create_escrow_on_chain raised exception for request_id=%s: %s",
-                    request_id,
-                    e,
-                )
-
-    # Single commit at the end for all assignments/updates.
     db.commit()
+    print(
+        "[ESCROW DEBUG] done apply_matches, created assignments =",
+        created,
+        "updated_requests =",
+        upd_r,
+        "updated_offers =",
+        upd_o,
+        "escrows_created = 0 (handled via /escrows/initiate now)",
+    )
 
     return {
         "ok": True,
         "created": created,
         "updated_requests": upd_r,
         "updated_offers": upd_o,
-        "escrows_created": escrows_created,
+        "escrows_created": 0,  # kept for backward compatibility
     }
+
 
 # ------------------------------ Chain calls ------------------------------
 
@@ -531,91 +510,6 @@ def _submit_with_wait(substrate, extrinsic, *, label: str):
         except JSONDecodeError as e2:
             log.warning("%s: second inclusion wait failed (%s); sending without wait", label, e2)
             return substrate.submit_extrinsic(extrinsic, wait_for_inclusion=False)
-        
-def create_escrow_on_chain(
-    substrate: SubstrateInterface,
-    signer: Keypair,
-    *,
-    request_uuid_hex16: str,
-    offer_uuid_hex16: str,
-    driver_wallet: str,
-    payer_wallet: str,
-    amount_cents: int,
-) -> str:
-    """
-    Create an escrow on-chain for a single (request, offer) assignment.
-
-    Parameters:
-      - request_uuid_hex16: 32-hex (UUID without dashes)
-      - offer_uuid_hex16:   32-hex (UUID without dashes)
-      - driver_wallet:      SS58 address of the driver (users.wallet_address)
-      - payer_wallet:       SS58 address of the payer (request.owner_user_id → users.wallet_address)
-      - amount_cents:       logical amount for escrow (in cents). On-chain Balance is used as cents.
-
-    Returns:
-      - extrinsic hash (str) if successful
-    """
-    matches_param_name = _param_matches()  # not really needed here, but kept for symmetry/logging
-    pallet = _escrow_pallet_name()
-    call_fn = _escrow_call_create()
-
-    # Convert UUID hex → [u8; 16]
-    rq_u8 = hex16_to_u8_array_16(request_uuid_hex16)
-    of_u8 = hex16_to_u8_array_16(offer_uuid_hex16)
-
-    # We treat "amount" on-chain as CENTS, not chain UNITs.
-    amt = int(amount_cents)
-    if amt <= 0:
-        raise HTTPException(status_code=400, detail={
-            "code": "escrow_zero_amount",
-            "hint": "Amount for escrow must be > 0 cents",
-        })
-
-    try:
-        call = substrate.compose_call(
-            call_module=pallet,
-            call_function=call_fn,
-            call_params={
-                "request_uuid": rq_u8,
-                "offer_uuid":   of_u8,
-                # substrate-interface will encode these as AccountId (SS58 strings).
-                "driver":       driver_wallet,
-                "payer":        payer_wallet,
-                "amount":       amt,
-            },
-        )
-        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
-        receipt = _submit_with_wait(substrate, extrinsic, label="create_escrow")
-        ok = getattr(receipt, "is_success", None)
-        log.info(
-            "create_escrow included/finalized: ok=%s hash=%s request=%s offer=%s amount_cents=%s",
-            ok,
-            getattr(receipt, "extrinsic_hash", None),
-            request_uuid_hex16,
-            offer_uuid_hex16,
-            amt,
-        )
-        if ok is False:
-            raise HTTPException(status_code=502, detail={
-                "code": "escrow_dispatch_failed",
-                "receipt": str(getattr(receipt, "error_message", "")),
-                "hint": "Check Escrow pallet error/event data",
-            })
-        return str(receipt.extrinsic_hash)
-    except HTTPException:
-        raise
-    except SubstrateRequestException as e:
-        log.exception("create_escrow RPC failed: %s", e)
-        raise HTTPException(status_code=502, detail={
-            "code": "escrow_rpc_failed",
-            "error": str(e),
-        })
-    except Exception as e:
-        log.exception("create_escrow failed: %s", e)
-        raise HTTPException(status_code=500, detail={
-            "code": "create_escrow_failed",
-            "error": str(e),
-        })
 
 
 @router.post("/submit-proposal")
@@ -684,9 +578,9 @@ def submit_proposal(body: SubmitProposalBody):
 
         # ---- priority-aware retry with increasing tip ----
         MAX_ATTEMPTS = int(os.getenv("POBA_TX_MAX_ATTEMPTS", "3"))
-        BASE_TIP     = int(os.getenv("POBA_TX_TIP_BASE", "0"))
-        TIP_STEP     = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
-        BACKOFF_MS   = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
+        BASE_TIP = int(os.getenv("POBA_TX_TIP_BASE", "0"))
+        TIP_STEP = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
+        BACKOFF_MS = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
 
         last_err: Optional[Exception] = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -696,10 +590,16 @@ def submit_proposal(body: SubmitProposalBody):
             try:
                 receipt = _submit_with_wait(substrate, extrinsic, label="submit_proposal")
                 ok = getattr(receipt, "is_success", None)
-                log.info("submit_proposal included/finalized: ok=%s hash=%s tip=%s", ok, receipt.extrinsic_hash, tip)
+                log.info(
+                    "submit_proposal included/finalized: ok=%s hash=%s tip=%s",
+                    ok,
+                    receipt.extrinsic_hash,
+                    tip,
+                )
                 for ev in getattr(receipt, "triggered_events", []) or []:
                     try:
-                        mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
+                        mod = ev.value["event"]["module"]
+                        name = ev.value["event"]["event"]
                         log.info("submit_proposal event: %s::%s", mod, name)
                     except Exception:
                         pass
@@ -718,8 +618,13 @@ def submit_proposal(body: SubmitProposalBody):
                 msg = str(getattr(e, "args", [""])[0]) or str(e)
                 is_priority_low = ("Priority is too low" in msg) or ("'code': 1014" in msg) or ('"code": 1014' in msg)
                 if is_priority_low and attempt < MAX_ATTEMPTS:
-                    log.warning("submit_proposal retry due to low priority (attempt %s/%s, tip=%s): %s",
-                                attempt, MAX_ATTEMPTS, tip, msg)
+                    log.warning(
+                        "submit_proposal retry due to low priority (attempt %s/%s, tip=%s): %s",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        tip,
+                        msg,
+                    )
                     time.sleep((BACKOFF_MS * attempt) / 1000.0)
                     last_err = e
                     continue
@@ -743,6 +648,7 @@ def submit_proposal(body: SubmitProposalBody):
             "code": "submit_proposal_failed",
             "error": str(e),
         })
+
 
 @router.post("/finalize-slot")
 def finalize_slot(body: FinalizeBody):
@@ -773,9 +679,9 @@ def finalize_slot(body: FinalizeBody):
 
         # ---- priority-aware retry with increasing tip ----
         MAX_ATTEMPTS = int(os.getenv("POBA_TX_MAX_ATTEMPTS", "3"))
-        BASE_TIP     = int(os.getenv("POBA_TX_TIP_BASE", "0"))
-        TIP_STEP     = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
-        BACKOFF_MS   = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
+        BASE_TIP = int(os.getenv("POBA_TX_TIP_BASE", "0"))
+        TIP_STEP = int(os.getenv("POBA_TX_TIP_STEP", "1000"))
+        BACKOFF_MS = int(os.getenv("POBA_TX_BACKOFF_MS", "150"))
 
         receipt = None
         last_err: Optional[Exception] = None
@@ -789,8 +695,13 @@ def finalize_slot(body: FinalizeBody):
                 msg = str(getattr(e, "args", [""])[0]) or str(e)
                 is_priority_low = ("Priority is too low" in msg) or ("'code': 1014" in msg) or ('"code": 1014' in msg)
                 if is_priority_low and attempt < MAX_ATTEMPTS:
-                    log.warning("finalize_slot retry due to low priority (attempt %s/%s, tip=%s): %s",
-                                attempt, MAX_ATTEMPTS, tip, msg)
+                    log.warning(
+                        "finalize_slot retry due to low priority (attempt %s/%s, tip=%s): %s",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        tip,
+                        msg,
+                    )
                     time.sleep((BACKOFF_MS * attempt) / 1000.0)
                     last_err = e
                     continue
@@ -806,7 +717,8 @@ def finalize_slot(body: FinalizeBody):
         log.info("finalize_slot included/finalized: ok=%s hash=%s", ok, receipt.extrinsic_hash)
         for ev in getattr(receipt, "triggered_events", []) or []:
             try:
-                mod = ev.value["event"]["module"]; name = ev.value["event"]["event"]
+                mod = ev.value["event"]["module"]
+                name = ev.value["event"]["event"]
                 log.info("finalize_slot event: %s::%s", mod, name)
             except Exception:
                 pass
@@ -885,7 +797,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
       - We iterate requests in given order and may SKIP a request with a heavy penalty (to avoid dead-ends)
 
     Cost model:
-      penalty = ALPHA * (d_start + d_end) + BETA * price_cents
+      penalty = ALPHA * (d_start + d_end) + BETA * agreed_price_cents
       (lower is better)
     Score model (for chain, positive and additive):
       score = max(0, BASE - penalty)
@@ -898,16 +810,16 @@ def build_proposal(body: BuildBody) -> BuildResp:
     m = len(O)
 
     # ---------------- Scoring parameters (tunable) ----------------
-    BASE  = int(os.getenv("POBA_BASE_SCORE", "1000000"))   # keep scores positive
+    BASE = int(os.getenv("POBA_BASE_SCORE", "1000000"))    # keep scores positive
     ALPHA = float(os.getenv("POBA_ALPHA_PER_KM", "1000"))  # penalty per km
-    BETA  = float(os.getenv("POBA_BETA_PER_CENT", "1"))    # penalty per cent
+    BETA = float(os.getenv("POBA_BETA_PER_CENT", "1"))     # penalty per cent
 
     # Heavy penalty for skipping a request (so we prefer matching when possible)
     SKIP_COST = int(os.getenv("POBA_SKIP_COST", "100000000"))  # default 1e8
 
     # Optional pairwise distance caps (via request, or ENV fallback)
     max_start_km = body.max_start_km if body.max_start_km is not None else (float(os.getenv("POBA_MAX_START_KM", "0")) or None)
-    max_end_km   = body.max_end_km   if body.max_end_km   is not None else (float(os.getenv("POBA_MAX_END_KM", "0")) or None)
+    max_end_km = body.max_end_km if body.max_end_km is not None else (float(os.getenv("POBA_MAX_END_KM", "0")) or None)
     max_total_km = body.max_total_km if body.max_total_km is not None else (float(os.getenv("POBA_MAX_TOTAL_KM", "0")) or None)
 
     # ---------------- Time-overlap requirements ----------------
@@ -916,7 +828,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
     MIN_OVERLAP_MS = int(float(os.getenv("POBA_MIN_OVERLAP_SEC", "0")) * 1000)
     # Optional slack: allow an offer to start a bit earlier / end a bit later
     EARLY_SLACK_MS = int(float(os.getenv("POBA_EARLY_SLACK_SEC", "0")) * 1000)
-    LATE_SLACK_MS  = int(float(os.getenv("POBA_LATE_SLACK_SEC", "0")) * 1000)
+    LATE_SLACK_MS = int(float(os.getenv("POBA_LATE_SLACK_SEC", "0")) * 1000)
 
     def intervals_overlap_ms(a_start: int, a_end: int, b_start: int, b_end: int,
                              min_olap: int = 0, early_slack: int = 0, late_slack: int = 0) -> bool:
@@ -937,9 +849,10 @@ def build_proposal(body: BuildBody) -> BuildResp:
     INF = 10**12  # sufficiently large
     cost = [[INF] * m for _ in range(n)]
     partial_score = [[0] * m for _ in range(n)]
-    price_agreed = [[0] * m for _ in range(n)]
+    price_agreed = [[0] * m for _ in range(n)]  # agreed price in cents per (request, offer)
 
     def haversine_km(lat1_e6: int, lon1_e6: int, lat2_e6: int, lon2_e6: int) -> float:
+        """Approximate distance in km between two geo points given in micro-degrees."""
         to_rad = lambda x: (x / 1_000_000.0) * math.pi / 180.0
         lat1, lon1, lat2, lon2 = map(to_rad, [lat1_e6, lon1_e6, lat2_e6, lon2_e6])
         dlat, dlon = lat2 - lat1, lon2 - lon1
@@ -966,7 +879,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
 
             # 3) Distance feasibility
             d_start = haversine_km(r.from_lat, r.from_lon, o.from_lat, o.from_lon)
-            d_end   = haversine_km(r.to_lat, r.to_lon, o.to_lat, o.to_lon)
+            d_end = haversine_km(r.to_lat, r.to_lon, o.to_lat, o.to_lon)
             d_total = d_start + d_end
 
             if max_start_km is not None and d_start > max_start_km:
@@ -976,27 +889,35 @@ def build_proposal(body: BuildBody) -> BuildResp:
             if max_total_km is not None and d_total > max_total_km:
                 continue
 
-            # 4) Scoring
-            # Agreed price policy: use offer's min price (could be replaced with negotiation policy)
-            p_cents = max(int(o.min_price_cents), 100)
+            # 4) Agreed price policy:
+            #    If request has a max_price_cents > 0:
+            #       agreed_price = midpoint between offer.min_price_cents and request.max_price_cents
+            #    Else:
+            #       agreed_price = offer.min_price_cents
+            offer_min = int(o.min_price_cents)
+            req_max = int(r.max_price_cents or 0)
+
+            if req_max > 0:
+                agreed = (offer_min + req_max) // 2
+            else:
+                agreed = offer_min
+
+            # Ensure strictly positive and sane
+            p_cents = max(1, agreed)
+
+            # 5) Scoring
             penalty = int(ALPHA * d_total + BETA * p_cents)  # minimize penalty
             sc = max(0, BASE - penalty)                      # positive score (maximize on-chain)
 
             partial_score[i][j] = int(sc)
-            price_agreed[i][j]  = p_cents
-            cost[i][j]          = penalty
+            price_agreed[i][j] = p_cents
+            cost[i][j] = penalty
 
     # ---------------- IDA* state space ----------------
-    # State = (i, used_mask, g_cost)
-    # i: index of current request (0..n)
-    # used_mask: bitmask over offers (size m)
-    # g_cost: accumulated cost up to this state
-
     from typing import Tuple as Tup, Iterable as _Iterable, Optional as _Optional
 
     def is_goal(state: Tup[int, int, int]) -> bool:
         i, used_mask, g = state
-        # We allow reaching i == n after matching OR penalized skipping
         return i == n
 
     def h(state: Tup[int, int, int]) -> float:
@@ -1009,7 +930,7 @@ def build_proposal(body: BuildBody) -> BuildResp:
             return []
         succ = []
 
-        # Penalized "skip request i" (prevents getting stuck if early requests are impossible)
+        # Penalized "skip request i"
         succ.append(((i + 1, used_mask, g + SKIP_COST), SKIP_COST))
 
         # Try to match request i with any unused feasible offer j
@@ -1037,7 +958,6 @@ def build_proposal(body: BuildBody) -> BuildResp:
         return BuildResp(slot=body.slot, total_score=0, matches=[])
 
     # ---------------- Reconstruct one optimal plan ----------------
-    # With h=0, we can replay greedily: for each i, prefer any successor that keeps us within best_cost.
     i, used_mask, acc = 0, 0, 0
     while i < n:
         chosen_j: _Optional[int] = None
@@ -1072,11 +992,10 @@ def build_proposal(body: BuildBody) -> BuildResp:
             i += 1
             continue
 
-        # Should not happen if best_cost is consistent; break to avoid infinite loop.
         break
 
     log.info(
-        "build_proposal: slot=%s total_score=%s matches=%s (skip_cost=%s, time_required=%s, min_overlap_ms=%s, early_slack_ms=%s, late_slack_ms=%s)",
+        "build_proposal: slot=%s total_score=%s matches=%s (skip_cost=%s, require_time_overlap=%s, min_overlap_ms=%s, early_slack_ms=%s, late_slack_ms=%s)",
         body.slot, total_score, len(matches), SKIP_COST,
         REQUIRE_TIME_OVERLAP, MIN_OVERLAP_MS, EARLY_SLACK_MS, LATE_SLACK_MS
     )
@@ -1107,6 +1026,7 @@ def chain_health():
             "error": str(e),
         })
 
+
 @router.get("/debug-config")
 def debug_config():
     return {
@@ -1118,11 +1038,19 @@ def debug_config():
         "param_matches": _param_matches(),
         "signer_uri_present": bool(os.getenv("SUBSTRATE_SIGNER_URI")),
         "signer_mnemonic_present": bool(os.getenv("SUBSTRATE_SIGNER_MNEMONIC")),
-        "signer_source": "URI" if os.getenv("SUBSTRATE_SIGNER_URI") else ("MNEMONIC" if os.getenv("SUBSTRATE_SIGNER_MNEMONIC") else "NONE"),
+        "signer_source": "URI" if os.getenv("SUBSTRATE_SIGNER_URI") else (
+            "MNEMONIC" if os.getenv("SUBSTRATE_SIGNER_MNEMONIC") else "NONE"
+        ),
         "wait_for_finalization": _wait_for_finalization(),
         "finalization_timeout_sec": _finalization_timeout_sec(),
         "auto_apply": os.getenv("BID_AUTO_APPLY", "0"),
+
+        # 🔍 Escrow debug (now only for separate /escrows routes)
+        "escrow_enable": os.getenv("ESCROW_ENABLE", "0"),
+        "escrow_pallet": _escrow_pallet_name(),
+        "escrow_call_create": _escrow_call_create(),
     }
+
 
 @router.get("/whoami")
 def whoami():
@@ -1160,13 +1088,16 @@ def apply_proposal(
 ):
     """
     Materialize a (built or finalized) proposal into the DB:
-    - Create assignments(request_id, driver_user_id, offer_id, status, assigned_at)
+    - Create assignments(request_id, driver_user_id, offer_id, agreed_price_cents, status, assigned_at)
     - Update requests.status='assigned'
     - Update courier_offers.status='assigned'
-    This endpoint trusts the payload you pass (typically from /poba/build-proposal).
-    In production you may want to fetch the finalized proposal from chain instead.
+
+    NOTE:
+    This does NOT create any on-chain escrow. Escrows are now created by
+    /escrows/initiate when the payer clicks the payment button.
     """
     return _apply_matches_to_db(payload.matches or [], db)
+
 
 @router.post("/finalize-and-apply")
 def finalize_and_apply(
@@ -1176,6 +1107,10 @@ def finalize_and_apply(
     Convenience endpoint:
     1) finalize-slot on chain (waits for finalization if POBA_WAIT_FINALIZATION=1)
     2) apply the same matches to DB immediately
+
+    NOTE:
+    As with /apply-proposal, this only touches the DB. On-chain escrows are
+    created later via /escrows/initiate.
     """
     # 1) finalize on chain
     fin = finalize_slot(FinalizeBody(slot=payload.slot))

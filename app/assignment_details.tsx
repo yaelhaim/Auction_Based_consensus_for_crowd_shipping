@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Image,
   Dimensions,
+  Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -24,6 +25,7 @@ import {
   checkOfferMatchStatus,
   getAssignmentByRequest,
   getAssignmentById, // ← prefer fetching by assignment id when available
+  initiateEscrow, // ← new: create escrow on pay click
   type RequestRow,
   type RiderRequestRow,
   type AssignmentDetailOut,
@@ -80,6 +82,7 @@ export default function AssignmentDetails() {
   );
   const [requestMeta, setRequestMeta] = useState<RequestLite | null>(null);
   const [isDriverMatched, setIsDriverMatched] = useState(false);
+  const [paying, setPaying] = useState(false); // ← payment in-flight flag
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -299,12 +302,60 @@ export default function AssignmentDetails() {
     ])
   );
 
-  function goHome() {
-    router.replace({
-      pathname: (home as any) || "/home_page",
-      params: { token },
-    });
-  }
+  // ---- Payment helpers ----
+
+  const isPayerRole = (role as Role) === "sender" || (role as Role) === "rider";
+
+  const canInitiatePayment =
+    !!assignment &&
+    isPayerRole &&
+    !!assignment.payment_status &&
+    ["pending_deposit", "failed", "refunded", "cancelled"].includes(
+      assignment.payment_status as string
+    );
+
+  const handlePay = async () => {
+    if (!assignment) return;
+    if (!token) {
+      Alert.alert("שגיאה", "נדרשת התחברות כדי לבצע תשלום.");
+      return;
+    }
+    if (!canInitiatePayment || paying) {
+      return;
+    }
+
+    try {
+      setPaying(true);
+      // Call backend: create DB escrow + on-chain escrow entry
+      const escrow = await initiateEscrow(
+        String(token),
+        assignment.assignment_id
+      );
+
+      // Update local payment_status from escrow.status
+      setAssignment((prev) =>
+        prev
+          ? ({ ...prev, payment_status: escrow.status } as AssignmentDetailOut)
+          : prev
+      );
+
+      // Navigate to dedicated payment info screen
+      router.replace({
+        pathname: "/payment_details",
+        params: {
+          token,
+          assignmentId: assignment.assignment_id,
+          escrowId: escrow.id,
+        },
+      });
+    } catch (e: any) {
+      const msg =
+        e?.message || "שגיאה ביצירת פיקדון התשלום. נסה/י שוב בעוד מספר דקות.";
+      Alert.alert("שגיאה", msg);
+    } finally {
+      setPaying(false);
+    }
+  };
 
   // -------- UI states --------
   if (loading) {
@@ -319,9 +370,6 @@ export default function AssignmentDetails() {
     return (
       <View style={S.centerWrap}>
         <Text style={S.err}>{error}</Text>
-        <TouchableOpacity onPress={goHome} style={[S.btn, S.btnBrown]}>
-          <Text style={S.btnText}>חזרה</Text>
-        </TouchableOpacity>
       </View>
     );
   }
@@ -352,6 +400,15 @@ export default function AssignmentDetails() {
 
   // Lower hero image more for the car
   const heroOffset = isRide ? 56 : 16;
+
+  // Price label from agreed_price_cents (if exists)
+  const priceCents =
+    typeof assignment.agreed_price_cents === "number"
+      ? assignment.agreed_price_cents
+      : null;
+  const priceLabel =
+    priceCents != null ? `${(priceCents / 100).toFixed(2)} ₪` : "—";
+  const paymentStatusLabel = prettyPaymentStatus(assignment.payment_status);
 
   return (
     <View style={S.page}>
@@ -410,12 +467,26 @@ export default function AssignmentDetails() {
           <InfoItem label="שעת שיוך" value={assignedLocal} />
         </View>
 
-        <TouchableOpacity
-          onPress={goHome}
-          style={[S.btn, S.btnBrown, { marginTop: 10 }]}
-        >
-          <Text style={S.btnText}>חזרה</Text>
-        </TouchableOpacity>
+        <View style={S.infoRow}>
+          <InfoItem label="מחיר שסוכם" value={priceLabel} />
+          <InfoItem label="סטטוס תשלום" value={paymentStatusLabel} />
+        </View>
+
+        {canInitiatePayment && (
+          <TouchableOpacity
+            onPress={handlePay}
+            disabled={paying}
+            style={[
+              S.btn,
+              S.btnBrown, // ← brown like the phone icon button
+              { marginTop: 16, opacity: paying ? 0.6 : 1 },
+            ]}
+          >
+            <Text style={S.btnText}>
+              {paying ? "מעדכן פיקדון…" : "להמשך תשלום"}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -425,6 +496,26 @@ export default function AssignmentDetails() {
 
 function prettyStatus(s: string) {
   return s.replaceAll("_", " ");
+}
+
+function prettyPaymentStatus(s?: string | null) {
+  if (!s) return "לא זמין";
+  switch (s) {
+    case "pending_deposit":
+      return "ממתין להפקדת תשלום";
+    case "deposited":
+      return "תשלום הופקד";
+    case "released":
+      return "תשלום שוחרר";
+    case "refunded":
+      return "תשלום הוחזר";
+    case "failed":
+      return "תשלום נכשל";
+    case "cancelled":
+      return "תשלום בוטל";
+    default:
+      return s.replaceAll("_", " ");
+  }
 }
 
 function RatingStars({
