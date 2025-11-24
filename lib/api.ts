@@ -284,13 +284,23 @@ export async function listSenderRequests(
 
 /** Courier job row shown to drivers (may originate from sender/rider requests). */
 export type CourierJobRow = {
+  // Backward-compat job id – still equals request_id for now
   id: string;
+
+  // New ids for details screen:
+  assignment_id?: string; // assignment.id (for active/delivered)
+  request_id?: string; // requests.id (for all buckets)
+
   type: "package" | "passenger";
   status: CommonStatus;
   from_address: string;
   to_address: string;
   window_start?: string | null;
   window_end?: string | null;
+
+  // Price computed from assignments.agreed_price_cents (float currency units)
+  agreed_price?: number | null;
+
   distance_km?: number | null;
   suggested_pay?: string | number | null;
   notes?: string | null;
@@ -327,6 +337,7 @@ export async function listCourierJobs(
     `${BASE_URL}/courier/jobs?${q.toString()}`,
     { headers: { ...authHeaders(token) } }
   );
+  // Backend already normalizes status + exposes assignment_id / request_id / agreed_price
   return rows.map((r) => ({
     ...r,
     status: normalizeStatus(r.status),
@@ -688,7 +699,7 @@ export type AssignmentDetailOut = {
   assignment_id: string;
   request_id: string;
   status: string;
-  // New: payment status + agreed price (in cents)
+
   payment_status?: PaymentStatus;
   agreed_price_cents?: number | null;
 
@@ -706,7 +717,16 @@ export type AssignmentDetailOut = {
   request: RequestBrief;
 };
 
-/** Get assignment by request; optionally scope by offerId to avoid wrong matches (kept for compatibility, backend ignores offer_id if not supported). */
+// Assignment logistics status options (must match backend)
+export type AssignmentStatus =
+  | "created"
+  | "picked_up"
+  | "in_transit"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+/** Get assignment by request; backend will usually return only active one. */
 export async function getAssignmentByRequest(
   requestId: string,
   offerId?: string
@@ -714,15 +734,39 @@ export async function getAssignmentByRequest(
   const url =
     `${BASE_URL}/assignments/by-request/${encodeURIComponent(requestId)}` +
     (offerId ? `?offer_id=${encodeURIComponent(offerId)}` : "");
-  return jsonFetch<AssignmentDetailOut>(url);
+  return jsonFetch<AssignmentDetailOut>(url, { timeoutMs: 12000 });
 }
 
-/** Get assignment by its ID (preferred for driver flow). */
+/** Get assignment by its ID (preferred when we know the assignment_id). */
 export async function getAssignmentById(
   assignmentId: string
 ): Promise<AssignmentDetailOut> {
   return jsonFetch<AssignmentDetailOut>(
-    `${BASE_URL}/assignments/${encodeURIComponent(assignmentId)}`
+    `${BASE_URL}/assignments/${encodeURIComponent(assignmentId)}`,
+    { timeoutMs: 12000 }
+  );
+}
+
+/**
+ * Update assignment logistics status (driver side).
+ * Mirrors PATCH /assignments/{id}/status in the backend.
+ */
+export async function updateAssignmentStatus(
+  token: string,
+  assignmentId: string,
+  status: AssignmentStatus
+): Promise<AssignmentDetailOut> {
+  return jsonFetch<AssignmentDetailOut>(
+    `${BASE_URL}/assignments/${encodeURIComponent(assignmentId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      timeoutMs: 12000,
+      body: JSON.stringify({ status }),
+    }
   );
 }
 

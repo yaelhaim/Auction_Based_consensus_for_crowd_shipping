@@ -14,6 +14,8 @@
 # NOTE:
 #   For status=active|delivered we now also SELECT assignments.agreed_price_cents
 #   and expose it as `agreed_price` (in currency units, e.g. NIS) to the mobile app.
+#   We also expose `request_id` (always) and `assignment_id` (for active/delivered)
+#   so the app can open a proper "assignment details" screen.
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Literal, List, Optional
@@ -91,7 +93,17 @@ def courier_jobs(
 ):
     """
     List jobs for the logged-in courier.
-    For active/delivered buckets we also expose `agreed_price` (float) based on assignments.agreed_price_cents.
+
+    For available:
+      - There is no assignment yet.
+      - `id` and `request_id` are the same (requests.id).
+      - `assignment_id` is null.
+
+    For active/delivered:
+      - `id` and `request_id` are the same (requests.id, for backward compatibility
+        with /courier/jobs/{job_id}/start|delivered which still expect request_id).
+      - `assignment_id` is the real assignments.id (used by the details screen).
+      - We also expose `agreed_price` (float), computed from agreed_price_cents.
     """
     if status == "available":
         # Available jobs have no assignment yet → no agreed_price here.
@@ -99,6 +111,8 @@ def courier_jobs(
             q = text("""
                 SELECT
                   r.id::text AS id,
+                  r.id::text AS request_id,
+                  NULL::text AS assignment_id,
                   r.type::text AS type,
                   r.status::text AS status,
                   r.from_address,
@@ -128,6 +142,8 @@ def courier_jobs(
             q = text("""
                 SELECT
                   r.id::text AS id,
+                  r.id::text AS request_id,
+                  NULL::text AS assignment_id,
                   r.type::text AS type,
                   r.status::text AS status,
                   r.from_address,
@@ -150,6 +166,8 @@ def courier_jobs(
         q = text("""
             SELECT
               r.id::text AS id,
+              r.id::text AS request_id,
+              a.id::text AS assignment_id,
               r.type::text AS type,
               r.status::text AS status,
               r.from_address,
@@ -173,6 +191,8 @@ def courier_jobs(
         q = text("""
             SELECT
               r.id::text AS id,
+              r.id::text AS request_id,
+              a.id::text AS assignment_id,
               r.type::text AS type,
               r.status::text AS status,
               r.from_address,
@@ -195,7 +215,9 @@ def courier_jobs(
 
     return [
         {
-            "id": r["id"],
+            "id": r["id"],  # kept for backward compatibility (equals request_id)
+            "request_id": r.get("request_id"),
+            "assignment_id": r.get("assignment_id"),
             "type": r["type"],
             "status": r["status"],
             "from_address": r["from_address"],
@@ -203,7 +225,9 @@ def courier_jobs(
             "window_start": _iso(r["window_start"]),
             "window_end": _iso(r["window_end"]),
             # New: agreed_price (only for active/delivered; None for available)
-            "agreed_price": float(r["agreed_price"]) if "agreed_price" in r and r["agreed_price"] is not None else None,
+            "agreed_price": float(r["agreed_price"])
+            if "agreed_price" in r and r["agreed_price"] is not None
+            else None,
             "distance_km": None,
             "suggested_pay": None,
             "notes": r["notes"],
@@ -225,6 +249,9 @@ def courier_accept_job(
     Manual accept of a single open request by a courier.
     This path does NOT set agreed_price_cents (it will remain NULL),
     which is fine for manual, off-PoBA assignments.
+
+    IMPORTANT:
+    job_id is still the requests.id (same as request_id/id from /courier/jobs).
     """
     chk = text("""
         SELECT r.id
@@ -266,6 +293,10 @@ def courier_start_job(
     db: Session = Depends(get_db),
     me=Depends(get_current_user),
 ):
+    """
+    Start a job (mark as in_transit).
+    job_id is still the requests.id.
+    """
     sel = text("""
         SELECT a.id
         FROM assignments a
@@ -303,6 +334,10 @@ def courier_delivered_job(
     db: Session = Depends(get_db),
     me=Depends(get_current_user),
 ):
+    """
+    Mark job as delivered/completed.
+    job_id is still the requests.id.
+    """
     sel = text("""
         SELECT a.id
         FROM assignments a

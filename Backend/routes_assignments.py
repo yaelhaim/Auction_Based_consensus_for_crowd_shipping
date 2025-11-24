@@ -1,5 +1,5 @@
 # Backend/routes_assignments.py
-# Read-only endpoints for assignment details. Always return tz-aware datetimes.
+# Assignment details + status updates. Always return tz-aware datetimes.
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ class DriverBrief(BaseModel):
     vehicle_type: Optional[str] = None
     avatar_url: Optional[str] = None
 
+
 class RequesterBrief(BaseModel):
     id: str
     full_name: Optional[str] = None
@@ -38,10 +39,12 @@ class RequesterBrief(BaseModel):
     rating: Optional[float] = None
     avatar_url: Optional[str] = None
 
+
 class LastLocation(BaseModel):
     lat: float
     lng: float
     updated_at: datetime
+
 
 class RequestBrief(BaseModel):
     id: str
@@ -55,11 +58,12 @@ class RequestBrief(BaseModel):
     window_end: Optional[datetime] = None
     notes: Optional[str] = None
 
+
 class AssignmentDetailOut(BaseModel):
     assignment_id: str
     request_id: str
     status: str
-    # New: payment status + agreed price
+    # Payment status + agreed price
     payment_status: Optional[str] = None
     agreed_price_cents: Optional[int] = None
 
@@ -76,13 +80,33 @@ class AssignmentDetailOut(BaseModel):
     last_location: Optional[LastLocation] = None
     request: RequestBrief
 
+
+# Input model for status update
+class AssignmentStatusUpdateIn(BaseModel):
+    status: str
+
+
 # ------------------------------ Router ------------------------------
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
+
+# Active assignment statuses used by "by-request"
 ACTIVE_ASSIGNMENT_STATUSES = {"created", "picked_up", "in_transit"}
+
+# Allowed logistics status transitions for assignments
+ALLOWED_STATUS_TRANSITIONS = {
+    "created": {"picked_up", "cancelled", "failed"},
+    "picked_up": {"in_transit", "cancelled", "failed"},
+    "in_transit": {"completed", "cancelled", "failed"},
+    "completed": set(),
+    "cancelled": set(),
+    "failed": set(),
+}
+VALID_ASSIGNMENT_STATUSES = set(ALLOWED_STATUS_TRANSITIONS.keys())
 
 
 def _normalize_request_type(v: Optional[str]) -> str:
+    """Normalize request type field coming from DB."""
     s = (v or "").strip().lower()
     if s in {"package", "ride", "passenger"}:
         return s
@@ -101,15 +125,19 @@ def _ensure_tz(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDetailOut:
+    """Build a rich, mobile-friendly assignment payload."""
+
     # ---- Driver
     driver = db.query(User).filter(User.id == assignment.driver_user_id).first()
     if not driver:
         raise HTTPException(status_code=500, detail="Driver user missing")
-    full_name = f"{getattr(driver,'first_name','') or ''} {getattr(driver,'last_name','') or ''}".strip() or None
+
+    full_name = f"{getattr(driver, 'first_name', '') or ''} {getattr(driver, 'last_name', '') or ''}".strip() or None
     try:
         rating_val = float(driver.rating) if driver.rating is not None else None
     except Exception:
         rating_val = None
+
     driver_out = DriverBrief(
         id=str(driver.id),
         full_name=full_name,
@@ -137,13 +165,13 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
         notes=getattr(req, "notes", None),
     )
 
-    # ---- Request owner
+    # ---- Request owner (requester)
     requester_out: Optional[RequesterBrief] = None
     owner_id = getattr(req, "owner_user_id", None)
     if owner_id:
         requester = db.query(User).filter(User.id == owner_id).first()
         if requester:
-            rn = f"{getattr(requester,'first_name','') or ''} {getattr(requester,'last_name','') or ''}".strip() or None
+            rn = f"{getattr(requester, 'first_name', '') or ''} {getattr(requester, 'last_name', '') or ''}".strip() or None
             try:
                 r_rating = float(requester.rating) if requester.rating is not None else None
             except Exception:
@@ -157,7 +185,7 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
             )
 
     # ---- Last known location (optional)
-    last_loc = None
+    last_loc: Optional[LastLocation] = None
     if HAS_LOCATIONS:
         loc = (
             db.query(CourierLocation)
@@ -176,7 +204,11 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
                 last_loc = None
 
     # ---- Assigned time with tz fallback (heals old naive rows)
-    assigned_at = assignment.assigned_at or getattr(assignment, "created_at", None) or getattr(assignment, "updated_at", None)
+    assigned_at = (
+        assignment.assigned_at
+        or getattr(assignment, "created_at", None)
+        or getattr(assignment, "updated_at", None)
+    )
     if not assigned_at:
         assigned_at = datetime.now(timezone.utc)
     if assigned_at.tzinfo is None:
@@ -189,7 +221,11 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
     # Normalize price cents
     price_cents: Optional[int]
     try:
-        price_cents = int(getattr(assignment, "agreed_price_cents", 0)) if assignment.agreed_price_cents is not None else None
+        price_cents = (
+            int(getattr(assignment, "agreed_price_cents", 0))
+            if assignment.agreed_price_cents is not None
+            else None
+        )
     except Exception:
         price_cents = None
 
@@ -212,6 +248,7 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
         request=request_out,
     )
 
+
 # ----------------------------- Endpoints -----------------------------
 
 @router.get("/by-request/{request_id}", response_model=AssignmentDetailOut)
@@ -220,21 +257,94 @@ def get_assignment_by_request(
     db: Session = Depends(get_db),
     only_active: bool = Query(True, description="Return only active assignments"),
 ):
+    """
+    Fetch the (most recent) assignment for a given request.
+    Optionally restricted to active assignment statuses only.
+    """
     q = db.query(Assignment).filter(Assignment.request_id == request_id)
     if only_active:
         q = q.filter(Assignment.status.in_(ACTIVE_ASSIGNMENT_STATUSES))
     assignment = q.order_by(Assignment.assigned_at.desc()).first()
     if not assignment:
-        raise HTTPException(status_code=404, detail="No active assignment found for this request")
+        raise HTTPException(
+            status_code=404,
+            detail="No active assignment found for this request",
+        )
     return _pack_assignment_detail(db, assignment)
 
 
 @router.get("/{assignment_id}", response_model=AssignmentDetailOut)
 def get_assignment_by_id(assignment_id: str, db: Session = Depends(get_db)):
+    """
+    Fetch a single assignment by its ID.
+    """
     assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
     return _pack_assignment_detail(db, assignment)
+
+
+# ------------------------- Update status endpoint -------------------------
+
+@router.patch("/{assignment_id}/status", response_model=AssignmentDetailOut)
+def update_assignment_status(
+    assignment_id: str,
+    payload: AssignmentStatusUpdateIn,
+    db: Session = Depends(get_db),
+):
+    """
+    Update the logistics status of an assignment and stamp the relevant milestone timestamp.
+
+    Allowed status transitions:
+      created   → picked_up / cancelled / failed
+      picked_up → in_transit / cancelled / failed
+      in_transit → completed / cancelled / failed
+
+    Once in completed / cancelled / failed, no further transitions are allowed.
+    """
+    new_status = (payload.status or "").strip()
+    if new_status not in VALID_ASSIGNMENT_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid assignment status")
+
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    current_status = str(assignment.status)
+    allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
+
+    # No-op if same status
+    if new_status == current_status:
+        return _pack_assignment_detail(db, assignment)
+
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Illegal status transition: {current_status} → {new_status}",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # Stamp the relevant milestone timestamp once
+    if new_status == "picked_up" and getattr(assignment, "picked_up_at", None) is None:
+        assignment.picked_up_at = now
+    elif new_status == "in_transit" and getattr(assignment, "in_transit_at", None) is None:
+        assignment.in_transit_at = now
+    elif new_status == "completed" and getattr(assignment, "completed_at", None) is None:
+        assignment.completed_at = now
+    elif new_status == "failed" and getattr(assignment, "failed_at", None) is None:
+        assignment.failed_at = now
+    elif new_status == "cancelled" and getattr(assignment, "cancelled_at", None) is None:
+        assignment.cancelled_at = now
+
+    assignment.status = new_status
+
+    db.add(assignment)
+    db.commit()
+    db.refresh(assignment)
+
+    return _pack_assignment_detail(db, assignment)
+
 
 # -------- Debug: recent --------
 
@@ -244,7 +354,7 @@ class RecentMatchItem(BaseModel):
     driver_user_id: str
     assigned_at: datetime
     status: str
-    # New (optional) for debugging:
+    # Optional fields for debugging:
     payment_status: Optional[str] = None
     agreed_price_cents: Optional[int] = None
 
@@ -254,8 +364,12 @@ class RecentMatchItem(BaseModel):
     requester_name: Optional[str] = None
     driver_name: Optional[str] = None
 
+
 @router.get("/recent", response_model=List[RecentMatchItem])
 def list_recent_matches(limit: int = 50, db: Session = Depends(get_db)):
+    """
+    Debug endpoint: list recent assignments with basic request/driver info.
+    """
     limit = max(1, min(limit, 200))
     rows = (
         db.query(Assignment, Request, User)
@@ -265,19 +379,31 @@ def list_recent_matches(limit: int = 50, db: Session = Depends(get_db)):
         .limit(limit)
         .all()
     )
+
     out: list[RecentMatchItem] = []
     for a, req, driver in rows:
         requester_name = None
         if getattr(req, "owner_user_id", None):
             rq = db.query(User).filter(User.id == req.owner_user_id).first()
             if rq:
-                requester_name = f"{getattr(rq,'first_name','') or ''} {getattr(rq,'last_name','') or ''}".strip() or None
-        driver_name = f"{getattr(driver,'first_name','') or ''} {getattr(driver,'last_name','') or ''}".strip() or None
+                requester_name = (
+                    f"{getattr(rq, 'first_name', '') or ''} {getattr(rq, 'last_name', '') or ''}".strip()
+                    or None
+                )
+
+        driver_name = (
+            f"{getattr(driver, 'first_name', '') or ''} {getattr(driver, 'last_name', '') or ''}".strip()
+            or None
+        )
 
         ps = getattr(a, "payment_status", None)
         ps_str = str(ps) if ps is not None else None
         try:
-            price_cents = int(getattr(a, "agreed_price_cents", 0)) if a.agreed_price_cents is not None else None
+            price_cents = (
+                int(getattr(a, "agreed_price_cents", 0))
+                if a.agreed_price_cents is not None
+                else None
+            )
         except Exception:
             price_cents = None
 

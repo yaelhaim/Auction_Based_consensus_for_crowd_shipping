@@ -1,5 +1,5 @@
-// Bucket list screen (Sender / Rider / Courier) — RTL-safe arrows/times.
-// Comments in English only. User-facing strings in Hebrew.
+// app/bucket_list.tsx
+// Bucket list screen (Sender / Rider / Courier)
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -10,8 +10,9 @@ import {
   StyleSheet,
   ActivityIndicator,
   SafeAreaView,
+  TouchableOpacity,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   listSenderRequests,
@@ -128,6 +129,7 @@ function statusLabelCourier(s: CourierJobRow["status"]) {
 
 export default function BucketListScreen() {
   const { token, role, bucket, title } = useLocalSearchParams<Params>();
+  const router = useRouter();
   const roleKey = (role as RoleKey) ?? "sender";
   const bucketKey = (bucket as string) ?? "open";
 
@@ -212,15 +214,37 @@ export default function BucketListScreen() {
   const renderItem = useCallback(
     ({ item }: { item: any }) => {
       if (roleKey === "courier") {
-        if (bucketKey === "available")
+        if (bucketKey === "available") {
           return <OfferCard it={item as CourierOfferRow} />;
-        return <CourierJobCard it={item as CourierJobRow} />;
+        }
+
+        // Courier ACTIVE/DELIVERED jobs are tappable → go to request_details
+        const job = item as CourierJobRow;
+        // assignment_id comes from backend for active/delivered; fallback to id (request_id) just in case
+        const assignmentId = (job as any).assignment_id ?? job.id;
+        const requestId = (job as any).request_id ?? job.id;
+
+        const onPress = () => {
+          if (!assignmentId && !requestId) return;
+          router.push({
+            pathname: "/request_details",
+            params: {
+              assignment_id: assignmentId ? String(assignmentId) : undefined,
+              request_id: requestId ? String(requestId) : undefined,
+              token: token ? String(token) : undefined,
+            },
+          });
+        };
+
+        return <CourierJobCard it={job} onPress={onPress} />;
       }
+
       if (roleKey === "rider")
         return <RiderCard it={item as RiderRequestRow} />;
+
       return <SenderCard it={item as RequestRow} />;
     },
-    [roleKey, bucketKey]
+    [roleKey, bucketKey, router, token]
   );
 
   return (
@@ -387,7 +411,13 @@ function RiderCard({ it }: { it: RiderRequestRow }) {
   );
 }
 
-function CourierJobCard({ it }: { it: CourierJobRow }) {
+function CourierJobCard({
+  it,
+  onPress,
+}: {
+  it: CourierJobRow;
+  onPress: () => void;
+}) {
   const status = statusLabelCourier(it.status);
   const win = windowRangeText(it.window_start, it.window_end);
 
@@ -426,7 +456,7 @@ function CourierJobCard({ it }: { it: CourierJobRow }) {
   ]);
 
   return (
-    <View style={S.wrap}>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={S.wrap}>
       <View style={S.card}>
         <Text style={S.title}>{arrow(it.from_address, it.to_address)}</Text>
 
@@ -450,7 +480,7 @@ function CourierJobCard({ it }: { it: CourierJobRow }) {
           <Line label="הערות" value={String(it.notes)} multi />
         ) : null}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
