@@ -7,8 +7,16 @@
 #     2) Creates (or reuses) an Escrow row in the DB.
 #     3) Calls the on-chain `Escrow::create_escrow` extrinsic with:
 #        (request_uuid, offer_uuid, driver, payer, amount).
-# - The `EscrowCreated` event will be visible on-chain exactly when this
-#   endpoint succeeds.
+#   -> This emits an `EscrowCreated` event on-chain.
+#
+# Additional flows:
+# - /escrows/confirm-delivered:
+#     * Called by the sender/rider (request owner) to confirm delivery.
+#     * Updates escrow + assignment + request in the DB.
+#     * Calls on-chain `Escrow::release_escrow` extrinsic (2nd event).
+# - /escrows/release-due:
+#     * Auto-release for escrows whose auto_release_at has passed.
+#     * Intended to be called periodically by a cron/worker.
 
 from __future__ import annotations
 
@@ -16,26 +24,25 @@ import os
 import logging
 from typing import Any, Optional
 from datetime import datetime, timezone
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from substrateinterface import SubstrateInterface, Keypair
-
 from .Database.db import get_db
 from .auth_dep import get_current_user
 from .models import Assignment, Escrow, Request, User
+
+# Reuse the Substrate helpers from PoBA:
+# - get_substrate(): fresh client with auto_reconnect and proper error handling
+# - get_signer(): signer from env (SUBSTRATE_SIGNER_URI / SUBSTRATE_SIGNER_MNEMONIC)
+from .routes_poba import get_substrate, get_signer
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/escrows", tags=["escrows"])
 
-# -------------------------- Substrate config --------------------------
-
-SUBSTRATE_WS_URL = os.getenv("SUBSTRATE_WS_URL", "ws://127.0.0.1:9944")
-SUBSTRATE_SIGNER_URI = os.getenv("SUBSTRATE_SIGNER_URI", "//Alice")
+# -------------------------- Substrate / escrow config --------------------------
 
 ESCROW_WAIT_FINALIZATION = os.getenv("ESCROW_WAIT_FINALIZATION", "0").lower() in (
     "1",
@@ -46,49 +53,14 @@ ESCROW_WAIT_FINALIZATION = os.getenv("ESCROW_WAIT_FINALIZATION", "0").lower() in
 # Optional fallback account when user has no wallet_address configured.
 ESCROW_FALLBACK_ACCOUNT = os.getenv("ESCROW_FALLBACK_ACCOUNT", "")
 
-_substrate: Optional[SubstrateInterface] = None
-_signer: Optional[Keypair] = None
-
-
-def get_substrate() -> SubstrateInterface:
-    """
-    Singleton-ish helper to reuse the Substrate WS connection.
-    """
-    global _substrate
-    if _substrate is None:
-        _substrate = SubstrateInterface(
-            url=SUBSTRATE_WS_URL,
-            ss58_format=42,
-            type_registry_preset="substrate-node-template",
-        )
-        logger.info("[escrow] Connected to Substrate at %s", SUBSTRATE_WS_URL)
-    return _substrate
-
-
-def get_signer() -> Keypair:
-    """
-    Single backend signer used as origin for escrow extrinsics.
-    NOTE:
-      * Pallet `create_escrow` currently only requires `ensure_signed(origin)`,
-        so the origin account is not strictly required to match payer/driver.
-      * We still pass *real* payer/driver AccountIds as parameters.
-    """
-    global _signer
-    if _signer is None:
-        _signer = Keypair.create_from_uri(SUBSTRATE_SIGNER_URI)
-        logger.info(
-            "[escrow] Using signer URI %s (address=%s)",
-            SUBSTRATE_SIGNER_URI,
-            _signer.ss58_address,
-        )
-    return _signer
-
 
 def _uuid16_from_any(val: Any) -> bytes:
     """
     Convert a Python UUID / string into 16-byte array for `[u8;16]` on-chain.
     Matches the representation used in the PoBA pallet.
     """
+    from uuid import UUID
+
     if isinstance(val, UUID):
         u = val
     else:
@@ -148,6 +120,10 @@ class EscrowInitiateIn(BaseModel):
     assignment_id: str
 
 
+class EscrowConfirmIn(BaseModel):
+    assignment_id: str
+
+
 class EscrowOut(BaseModel):
     id: str
     assignment_id: str
@@ -157,9 +133,13 @@ class EscrowOut(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    # Optional timestamps for the new flow
+    driver_marked_completed_at: Optional[datetime] = None
+    sender_confirmed_at: Optional[datetime] = None
+    auto_release_at: Optional[datetime] = None
 
 
-# -------------------------- On-chain helper --------------------------
+# -------------------------- On-chain helpers --------------------------
 
 def _create_onchain_escrow_for_assignment(
     db: Session,
@@ -247,6 +227,82 @@ def _create_onchain_escrow_for_assignment(
     )
 
 
+def _release_onchain_escrow_for_assignment(
+    asg: Assignment,
+    req: Request,
+) -> None:
+    """
+    Compose and submit the `Escrow::release_escrow` extrinsic.
+
+    Called when:
+      - Sender confirms delivery (manual release), OR
+      - In future, auto-release cron might also call this.
+
+    Signature assumed:
+      Escrow::release_escrow(
+        origin,
+        request_uuid: [u8;16],
+        offer_uuid: [u8;16],
+      )
+    """
+    offer_id = getattr(asg, "offer_id", None)
+    if not offer_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Assignment has no offer_id; cannot release on-chain escrow",
+        )
+
+    request_uuid_bytes = _uuid16_from_any(req.id)
+    offer_uuid_bytes = _uuid16_from_any(offer_id)
+
+    substrate = get_substrate()
+    signer = get_signer()
+
+    call = substrate.compose_call(
+        call_module="Escrow",
+        call_function="release_escrow",
+        call_params={
+            "request_uuid": request_uuid_bytes,
+            "offer_uuid": offer_uuid_bytes,
+        },
+    )
+
+    extrinsic = substrate.create_signed_extrinsic(call=call, keypair=signer)
+
+    wait_args = {}
+    if ESCROW_WAIT_FINALIZATION:
+        wait_args["wait_for_finalization"] = True
+    else:
+        wait_args["wait_for_inclusion"] = True
+
+    try:
+        receipt = substrate.submit_extrinsic(extrinsic, **wait_args)
+    except Exception as e:
+        logger.exception("[escrow] submit_extrinsic(release_escrow) failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to submit release_escrow extrinsic: {e}",
+        )
+
+    if not getattr(receipt, "is_success", False):
+        logger.error(
+            "[escrow] release_escrow extrinsic failed: %s",
+            getattr(receipt, "error_message", None),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"release_escrow extrinsic failed: "
+                f"{getattr(receipt, 'error_message', 'unknown error')}"
+            ),
+        )
+
+    logger.info(
+        "[escrow] release_escrow OK (hash=%s)",
+        getattr(receipt, "extrinsic_hash", None),
+    )
+
+
 # -------------------------- Routes --------------------------
 
 @router.post("/initiate", response_model=EscrowOut, status_code=status.HTTP_201_CREATED)
@@ -321,6 +377,7 @@ def initiate_escrow(
     # return existing escrow (idempotent behaviour).
     if asg.escrow is not None and ps not in allowed_start_status:
         e = asg.escrow
+        now = datetime.now(timezone.utc)
         return EscrowOut(
             id=str(e.id),
             assignment_id=str(e.assignment_id),
@@ -328,14 +385,18 @@ def initiate_escrow(
             payee_user_id=str(e.payee_user_id),
             amount_cents=int(e.amount_cents),
             status=str(e.status),
-            created_at=e.created_at or datetime.now(timezone.utc),
-            updated_at=e.updated_at or datetime.now(timezone.utc),
+            created_at=e.created_at or now,
+            updated_at=e.updated_at or now,
+            driver_marked_completed_at=getattr(e, "driver_marked_completed_at", None),
+            sender_confirmed_at=getattr(e, "sender_confirmed_at", None),
+            auto_release_at=getattr(e, "auto_release_at", None),
         )
 
     # 5) If escrow already exists but we are allowed to (re)start, just reuse it
     #    and DO NOT call on-chain again (we assume it was already done).
     if asg.escrow is not None and ps in allowed_start_status:
         e = asg.escrow
+        now = datetime.now(timezone.utc)
         return EscrowOut(
             id=str(e.id),
             assignment_id=str(e.assignment_id),
@@ -343,8 +404,11 @@ def initiate_escrow(
             payee_user_id=str(e.payee_user_id),
             amount_cents=int(e.amount_cents),
             status=str(e.status),
-            created_at=e.created_at or datetime.now(timezone.utc),
-            updated_at=e.updated_at or datetime.now(timezone.utc),
+            created_at=e.created_at or now,
+            updated_at=e.updated_at or now,
+            driver_marked_completed_at=getattr(e, "driver_marked_completed_at", None),
+            sender_confirmed_at=getattr(e, "sender_confirmed_at", None),
+            auto_release_at=getattr(e, "auto_release_at", None),
         )
 
     # 6) Create a new Escrow row + align assignment.payment_status,
@@ -381,6 +445,7 @@ def initiate_escrow(
     db.refresh(e)
     db.refresh(asg)
 
+    now = datetime.now(timezone.utc)
     return EscrowOut(
         id=str(e.id),
         assignment_id=str(e.assignment_id),
@@ -388,6 +453,190 @@ def initiate_escrow(
         payee_user_id=str(e.payee_user_id),
         amount_cents=int(e.amount_cents),
         status=str(e.status),
-        created_at=e.created_at or datetime.now(timezone.utc),
-        updated_at=e.updated_at or datetime.now(timezone.utc),
+        created_at=e.created_at or now,
+        updated_at=e.updated_at or now,
+        driver_marked_completed_at=getattr(e, "driver_marked_completed_at", None),
+        sender_confirmed_at=getattr(e, "sender_confirmed_at", None),
+        auto_release_at=getattr(e, "auto_release_at", None),
     )
+
+
+@router.post("/confirm-delivered", response_model=EscrowOut)
+def confirm_delivered(
+    payload: EscrowConfirmIn,
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user),
+):
+    """
+    Called by the request owner (sender / rider) to confirm that the package
+    or ride was delivered.
+
+    Effects:
+      - Only allowed if:
+          * assignment exists
+          * caller is request.owner_user_id
+          * assignment.status == 'completed'
+          * escrow exists and is in a releasable state (e.g. deposited)
+      - Updates (DB):
+          * escrow.status = 'released'
+          * escrow.sender_confirmed_at = now
+          * escrow.auto_release_at = now (if not already set)
+          * assignment.payment_status = 'released'
+          * request.status = 'completed' (so it moves to the "completed" list)
+      - On-chain:
+          * Calls Escrow::release_escrow(request_uuid, offer_uuid),
+            emitting an `EscrowReleased` (or similar) event.
+    """
+    uid = _get_user_id(user)
+
+    asg: Optional[Assignment] = (
+        db.query(Assignment)
+        .filter(Assignment.id == payload.assignment_id)
+        .first()
+    )
+    if not asg:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    req: Optional[Request] = (
+        db.query(Request)
+        .filter(Request.id == asg.request_id)
+        .first()
+    )
+    if not req:
+        raise HTTPException(
+            status_code=500,
+            detail="Request row missing for assignment",
+        )
+
+    # Ensure caller is the request owner (payer)
+    if str(req.owner_user_id) != str(uid):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the request owner can confirm delivery for this assignment",
+        )
+
+    # Require that the logistics side is already completed
+    if str(asg.status) != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail="Assignment must be completed before confirming delivery",
+        )
+
+    esc: Optional[Escrow] = asg.escrow
+    if esc is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No escrow exists for this assignment",
+        )
+
+    # Guard: escrow must be in a releasable payment state
+    # In a stricter production flow you might require esc.status == "deposited".
+    if str(esc.status) not in {"pending_deposit", "deposited"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Escrow is in status '{esc.status}', cannot release",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # Update DB objects but do not commit until the extrinsic succeeds
+    esc.sender_confirmed_at = now
+    esc.status = "released"
+    if getattr(esc, "auto_release_at", None) is None:
+        esc.auto_release_at = now
+
+    # Mark request as completed so it moves from "active" to "completed" lists
+    req.status = "completed"
+    req.updated_at = now
+
+    asg.payment_status = "released"
+
+    db.add(esc)
+    db.add(asg)
+    db.add(req)
+
+    try:
+        # On-chain release – 2nd escrow-related event on the chain.
+        _release_onchain_escrow_for_assignment(asg, req)
+
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e_generic:
+        db.rollback()
+        logger.exception("[escrow] Unexpected error in confirm_delivered")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error in confirm_delivered: {e_generic}",
+        )
+
+    db.refresh(esc)
+    db.refresh(asg)
+
+    return EscrowOut(
+        id=str(esc.id),
+        assignment_id=str(esc.assignment_id),
+        payer_user_id=str(esc.payer_user_id),
+        payee_user_id=str(esc.payee_user_id),
+        amount_cents=int(esc.amount_cents),
+        status=str(esc.status),
+        created_at=esc.created_at or now,
+        updated_at=esc.updated_at or now,
+        driver_marked_completed_at=getattr(esc, "driver_marked_completed_at", None),
+        sender_confirmed_at=getattr(esc, "sender_confirmed_at", None),
+        auto_release_at=getattr(esc, "auto_release_at", None),
+    )
+
+
+@router.post("/release-due")
+def release_due(db: Session = Depends(get_db)):
+    """
+    Auto-release escrows whose auto_release_at has passed.
+
+    Intended for a periodic cron/worker:
+      - Finds escrows with:
+          * status in ('deposited', 'pending_deposit')  [configurable]
+          * auto_release_at IS NOT NULL
+          * auto_release_at <= now
+      - Sets:
+          * escrow.status = 'released'
+          * escrow.sender_confirmed_at (if empty) = now
+          * assignment.payment_status = 'released'
+
+    NOTE:
+      Currently this only updates the DB. If you want on-chain events for
+      auto-release as well, you can extend this to call
+      `_release_onchain_escrow_for_assignment` per escrow (similar to
+      confirm_delivered), but that is left as a future enhancement.
+    """
+    now = datetime.now(timezone.utc)
+
+    # You can tighten this to only 'deposited' in production if you want.
+    candidates: list[Escrow] = (
+        db.query(Escrow)
+        .filter(
+            Escrow.status.in_(["deposited", "pending_deposit"]),
+            Escrow.auto_release_at.isnot(None),
+            Escrow.auto_release_at <= now,
+        )
+        .all()
+    )
+
+    released_count = 0
+
+    for esc in candidates:
+        esc.status = "released"
+        if getattr(esc, "sender_confirmed_at", None) is None:
+            esc.sender_confirmed_at = now
+
+        if esc.assignment is not None:
+            esc.assignment.payment_status = "released"
+
+        db.add(esc)
+        released_count += 1
+
+    if released_count:
+        db.commit()
+
+    return {"ok": True, "released": released_count}

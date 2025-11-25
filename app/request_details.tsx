@@ -1,5 +1,6 @@
 // app/request_details.tsx
-// Courier task details screen: shows full assignment info + allows status update via bottom sheet.
+// Task details screen: shows full assignment info.
+// Driver can update assignment status; sender confirms package received; rider confirms arrival.
 // Comments in English. User-facing text in Hebrew.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -19,15 +20,20 @@ import {
   getAssignmentById,
   getAssignmentByRequest,
   updateAssignmentStatus,
+  confirmAssignmentDelivered, // (no longer used but kept for now – safe to remove if you want)
+  confirmEscrowDelivered,
   type AssignmentDetailOut,
   type AssignmentStatus,
 } from "../lib/api";
 import { COLORS } from "./ui/theme";
 
+type ModeKey = "driver" | "rider" | "sender";
+
 type Params = {
   assignment_id?: string;
   request_id?: string;
   token?: string;
+  mode?: ModeKey;
 };
 
 /* ---------- Helpers for date/time + labels (similar to bucket_list) ---------- */
@@ -129,7 +135,8 @@ const STATUS_LABELS: Record<AssignmentStatus, string> = {
 /* ---------------------------- Main screen ---------------------------- */
 
 export default function RequestDetailsScreen() {
-  const { assignment_id, request_id, token } = useLocalSearchParams<Params>();
+  const { assignment_id, request_id, token, mode } =
+    useLocalSearchParams<Params>();
 
   const [data, setData] = useState<AssignmentDetailOut | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,8 +144,16 @@ export default function RequestDetailsScreen() {
 
   const [sheetVisible, setSheetVisible] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [confirmingDelivered, setConfirmingDelivered] = useState(false);
 
-  const canUpdateStatus = !!token && (!!assignment_id || !!request_id);
+  const isDriverView: boolean = mode === "driver";
+  const isSenderView: boolean = mode === "sender";
+  const isRiderView: boolean = mode === "rider";
+  const isCustomerView: boolean = isSenderView || isRiderView;
+
+  // Only driver can update assignment status
+  const canUpdateStatus =
+    !!token && (!!assignment_id || !!request_id) && isDriverView;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,7 +227,7 @@ export default function RequestDetailsScreen() {
   const handleStatusChange = async (newStatus: AssignmentStatus) => {
     if (!token) return;
 
-    // if we don't know assignment_id yet, we can't patch – just ignore
+    // If we don't know assignment_id yet, we can't patch – just ignore
     const aid = assignment_id ?? data?.assignment_id;
     if (!aid) return;
 
@@ -229,6 +244,54 @@ export default function RequestDetailsScreen() {
       setErr(e?.message || "שגיאה בעדכון הסטטוס");
     } finally {
       setSavingStatus(false);
+    }
+  };
+
+  // Customer (sender/rider) confirmation:
+  // For both sender and rider we want:
+  //   - logistics already completed (assignment.status === 'completed')
+  //   - Escrow flow to exist or be allowed (payment_status == null / pending_deposit / deposited)
+  //   - Then we call /escrows/confirm-delivered which:
+  //       * releases escrow on-chain
+  //       * updates assignment + request statuses in the DB.
+  const hasAnyId = !!assignment_id || !!request_id || !!data?.assignment_id;
+
+  const canConfirmDelivered =
+    !!token &&
+    hasAnyId &&
+    isCustomerView &&
+    data?.status === "completed" &&
+    (data?.payment_status === null ||
+      data?.payment_status === undefined ||
+      data?.payment_status === "pending_deposit" ||
+      data?.payment_status === "deposited");
+
+  const handleConfirmDelivered = async () => {
+    if (!token || !data) return;
+    const aid = data.assignment_id ?? assignment_id;
+    if (!aid) return;
+
+    try {
+      setConfirmingDelivered(true);
+
+      // Sender + rider: both go through the escrow confirm endpoint.
+      // Backend handles both ride and package flows and also updates
+      // Request/Assignment/payment statuses.
+      await confirmEscrowDelivered(String(token), String(aid));
+
+      // After escrow release, reload assignment detail so:
+      //   - payment_status becomes "released"
+      //   - request.status might become "completed"
+      //   - lists of active/completed can reflect the new state.
+      const refreshed = await getAssignmentById(String(aid));
+      setData(refreshed);
+    } catch (e: any) {
+      setErr(
+        e?.message ||
+          (isSenderView ? "שגיאה באישור קבלת החבילה" : "שגיאה באישור הגעה ליעד")
+      );
+    } finally {
+      setConfirmingDelivered(false);
     }
   };
 
@@ -428,7 +491,7 @@ export default function RequestDetailsScreen() {
           </ScrollView>
         )}
 
-        {/* Bottom bar: Update status */}
+        {/* Bottom bar: Update status for driver */}
         {data && canUpdateStatus && nextOptions.length > 0 && (
           <View style={S.bottomBarWrap}>
             <TouchableOpacity
@@ -444,7 +507,29 @@ export default function RequestDetailsScreen() {
           </View>
         )}
 
-        {/* Bottom sheet for status selection */}
+        {/* Bottom bar: Customer confirmation (sender/rider) */}
+        {data && isCustomerView && canConfirmDelivered && (
+          <View style={S.bottomBarWrap}>
+            <TouchableOpacity
+              style={S.statusBtn}
+              onPress={handleConfirmDelivered}
+              disabled={confirmingDelivered}
+              activeOpacity={0.9}
+            >
+              <Text style={S.statusBtnTxt}>
+                {confirmingDelivered
+                  ? isSenderView
+                    ? "מאשר/ת קבלה…"
+                    : "מאשר/ת הגעה…"
+                  : isSenderView
+                    ? "מאשר/ת שקיבלתי את החבילה"
+                    : "מאשר/ת שהגעתי ליעד"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Bottom sheet for status selection (driver only) */}
         <Modal
           transparent
           visible={sheetVisible}
@@ -472,7 +557,6 @@ export default function RequestDetailsScreen() {
                   <Text style={S.sheetOptionTxt}>{STATUS_LABELS[st]}</Text>
                 </TouchableOpacity>
               ))}
-
               <TouchableOpacity
                 style={S.sheetCancel}
                 disabled={savingStatus}

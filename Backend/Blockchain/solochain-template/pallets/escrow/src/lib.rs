@@ -94,7 +94,7 @@ pub mod pallet {
         AssignmentEscrow<
             T::AccountId,
             T::Balance,
-            BlockNumberFor<T> // <--- CHANGED: use BlockNumberFor<T>
+            BlockNumberFor<T> // <--- uses BlockNumberFor<T>
         >,
         OptionQuery
     >;
@@ -123,7 +123,7 @@ pub mod pallet {
             driver: T::AccountId,
             payer: T::AccountId,
             amount: T::Balance,
-            deadline: BlockNumberFor<T>, // <--- CHANGED
+            deadline: BlockNumberFor<T>,
         },
         /// Courier marked pickup.
         PickedUp {
@@ -359,6 +359,60 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Backend-style release based on (request_uuid, offer_uuid).
+        ///
+        /// This is the extrinsic that the backend calls from
+        /// `_release_onchain_escrow_for_assignment`:
+        ///
+        ///   Escrow::release_escrow(request_uuid, offer_uuid)
+        ///
+        /// It:
+        ///   - Locates the escrow via `RequestToEscrow`.
+        ///   - Verifies the stored offer_uuid matches.
+        ///   - Ensures the escrow is not in a final status.
+        ///   - Sets status = ConfirmedByReceiver.
+        ///   - Emits PaymentReleased + ReceiverConfirmed.
+        #[pallet::weight(10_000)]
+        pub fn release_escrow(
+            origin: OriginFor<T>,
+            request_uuid: RequestUuid,
+            offer_uuid: OfferUuid,
+        ) -> DispatchResult {
+            let _who = ensure_signed(origin)?;
+
+            let escrow_id =
+                RequestToEscrow::<T>::get(&request_uuid).ok_or(Error::<T>::EscrowNotFound)?;
+
+            let mut amount_to_release: T::Balance = T::Balance::from(0u32);
+
+            Escrows::<T>::try_mutate(escrow_id, |maybe| -> DispatchResult {
+                let escrow = maybe.as_mut().ok_or(Error::<T>::EscrowNotFound)?;
+
+                // Sanity: ensure the offer matches the one we expect.
+                ensure!(escrow.offer_uuid == offer_uuid, Error::<T>::EscrowNotFound);
+
+                // Do not allow double release or further transitions from final states.
+                ensure!(
+                    !Self::is_final_status(&escrow.status),
+                    Error::<T>::EscrowAlreadyFinal
+                );
+
+                // Mark as confirmed by receiver and prepare amount for the event.
+                escrow.status = DeliveryStatus::ConfirmedByReceiver;
+                amount_to_release = escrow.amount;
+
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::PaymentReleased {
+                escrow_id,
+                amount: amount_to_release,
+            });
+            Self::deposit_event(Event::ReceiverConfirmed { escrow_id });
+
+            Ok(())
+        }
+
         /// Force payment release after timeout if receiver did not confirm.
         ///
         /// Can be called by anyone; the on-chain guard is purely by block number
@@ -371,7 +425,7 @@ pub mod pallet {
             let _who = ensure_signed(origin)?;
 
             let mut amount_to_release: T::Balance = T::Balance::from(0u32);
-            let now: BlockNumberFor<T> = frame_system::Pallet::<T>::block_number(); // <--- CHANGED
+            let now: BlockNumberFor<T> = frame_system::Pallet::<T>::block_number();
 
             Escrows::<T>::try_mutate(escrow_id, |maybe| -> DispatchResult {
                 let escrow = maybe.as_mut().ok_or(Error::<T>::EscrowNotFound)?;

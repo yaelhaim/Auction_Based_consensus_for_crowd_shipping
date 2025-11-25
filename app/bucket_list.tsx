@@ -169,6 +169,7 @@ export default function BucketListScreen() {
           String(token),
           bucketKey as SenderBucket
         );
+        // Filter out ride-type rows; sender bucket is only for packages
         setItems((rows ?? []).filter((r: any) => r?.type !== "ride"));
         return;
       }
@@ -213,14 +214,14 @@ export default function BucketListScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: any }) => {
+      // Courier view
       if (roleKey === "courier") {
         if (bucketKey === "available") {
           return <OfferCard it={item as CourierOfferRow} />;
         }
 
-        // Courier ACTIVE/DELIVERED jobs are tappable → go to request_details
+        // Courier ACTIVE/DELIVERED jobs are tappable → go to request_details as driver
         const job = item as CourierJobRow;
-        // assignment_id comes from backend for active/delivered; fallback to id (request_id) just in case
         const assignmentId = (job as any).assignment_id ?? job.id;
         const requestId = (job as any).request_id ?? job.id;
 
@@ -232,6 +233,7 @@ export default function BucketListScreen() {
               assignment_id: assignmentId ? String(assignmentId) : undefined,
               request_id: requestId ? String(requestId) : undefined,
               token: token ? String(token) : undefined,
+              mode: "driver",
             },
           });
         };
@@ -239,10 +241,65 @@ export default function BucketListScreen() {
         return <CourierJobCard it={job} onPress={onPress} />;
       }
 
-      if (roleKey === "rider")
-        return <RiderCard it={item as RiderRequestRow} />;
+      // Rider view – active/completed are tappable for details/confirm
+      if (roleKey === "rider") {
+        const it = item as RiderRequestRow;
+        const isTappable = bucketKey === "active" || bucketKey === "completed";
 
-      return <SenderCard it={item as RequestRow} />;
+        if (!isTappable) {
+          return <RiderCard it={it} />;
+        }
+
+        const onPress = () => {
+          router.push({
+            pathname: "/request_details",
+            params: {
+              request_id: String(it.id),
+              token: token ? String(token) : undefined,
+              mode: "rider",
+            },
+          });
+        };
+
+        return (
+          <TouchableOpacity
+            onPress={onPress}
+            activeOpacity={0.9}
+            style={{ flex: 1 }}
+          >
+            <RiderCard it={it} />
+          </TouchableOpacity>
+        );
+      }
+
+      // Sender view – active/delivered are tappable for details/confirm
+      const it = item as RequestRow;
+      const isTappable = bucketKey === "active" || bucketKey === "delivered";
+
+      if (!isTappable) {
+        return <SenderCard it={it} />;
+      }
+
+      const onPress = () => {
+        router.push({
+          pathname: "/request_details",
+          params: {
+            request_id: String(it.id),
+            token: token ? String(token) : undefined,
+            mode: "sender",
+          },
+        });
+      };
+
+      return (
+        <TouchableOpacity
+          onPress={onPress}
+          activeOpacity={0.9}
+          style={{ flex: 1 }}
+        >
+          <SenderCard it={it} />
+        </TouchableOpacity>
+      );
     },
     [roleKey, bucketKey, router, token]
   );

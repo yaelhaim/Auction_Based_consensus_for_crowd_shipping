@@ -33,7 +33,6 @@ bid_status_enum         = SAEnum("committed", "revealed", "won", "lost", "cancel
 assignment_status_enum  = SAEnum("created", "picked_up", "in_transit", "completed", "failed", "cancelled", name="assignment_status")
 proof_type_enum         = SAEnum("photo", "signature", "note", name="proof_type")
 
-# New: shared payment status enum for assignments.payment_status + escrows.status
 payment_status_enum = SAEnum(
     "pending_deposit",
     "deposited",
@@ -331,7 +330,7 @@ class Escrows(Base):
     id            = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     assignment_id = Column(PG_UUID(as_uuid=True), ForeignKey("assignments.id"), nullable=False)
 
-    # New: logical payer/payee and amount in cents
+    # Logical payer/payee and amount in cents
     payer_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     payee_user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
@@ -345,6 +344,11 @@ class Escrows(Base):
 
     # Shared payment status enum
     status        = Column(payment_status_enum, nullable=False, server_default="pending_deposit")
+
+    # New: timestamps to support courier completion + sender confirmation + auto-release
+    driver_marked_completed_at = Column(DateTime(timezone=True))
+    sender_confirmed_at        = Column(DateTime(timezone=True))
+    auto_release_at            = Column(DateTime(timezone=True))
 
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

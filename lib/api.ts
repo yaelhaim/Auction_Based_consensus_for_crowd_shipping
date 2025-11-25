@@ -770,6 +770,29 @@ export async function updateAssignmentStatus(
   );
 }
 
+/**
+ * Rider-side logical confirmation that arrival/delivery was acknowledged.
+ * Backend endpoint: POST /assignments/{id}/confirm-delivered.
+ */
+export async function confirmAssignmentDelivered(
+  token: string,
+  assignmentId: string
+): Promise<AssignmentDetailOut> {
+  return jsonFetch<AssignmentDetailOut>(
+    `${BASE_URL}/assignments/${encodeURIComponent(
+      assignmentId
+    )}/confirm-delivered`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      timeoutMs: 12000,
+    }
+  );
+}
+
 /* ----------------------------- Matching triggers ---------------------------- */
 /** Ask server to try and create a REAL assignment for a driver offer (atomic). */
 function ensureMatchTriggerAllowed() {
@@ -830,6 +853,9 @@ export type EscrowRow = {
   status: PaymentStatus;
   created_at: string;
   updated_at: string;
+  driver_marked_completed_at?: string | null;
+  sender_confirmed_at?: string | null;
+  auto_release_at?: string | null;
 };
 
 /**
@@ -842,6 +868,25 @@ export async function initiateEscrow(
   assignmentId: string
 ): Promise<EscrowRow> {
   return jsonFetch<EscrowRow>(`${BASE_URL}/escrows/initiate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    timeoutMs: 12000,
+    body: JSON.stringify({ assignment_id: assignmentId }),
+  });
+}
+
+/**
+ * Sender-side confirmation that triggers escrow release on-chain.
+ * Calls POST /escrows/confirm-delivered with { assignment_id } and returns Escrow row.
+ */
+export async function confirmEscrowDelivered(
+  token: string,
+  assignmentId: string
+): Promise<EscrowRow> {
+  return jsonFetch<EscrowRow>(`${BASE_URL}/escrows/confirm-delivered`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

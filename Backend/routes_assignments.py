@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .Database.db import get_db
-from .models import Assignment, User, Request
+from .models import Assignment, User, Request, Escrow
 
 # Optional live locations model
 try:
@@ -91,7 +91,9 @@ class AssignmentStatusUpdateIn(BaseModel):
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 # Active assignment statuses used by "by-request"
-ACTIVE_ASSIGNMENT_STATUSES = {"created", "picked_up", "in_transit"}
+# IMPORTANT: include "completed" so that sender/rider can still see details
+# after the driver marked the assignment as completed.
+ACTIVE_ASSIGNMENT_STATUSES = {"created", "picked_up", "in_transit", "completed"}
 
 # Allowed logistics status transitions for assignments
 ALLOWED_STATUS_TRANSITIONS = {
@@ -255,11 +257,19 @@ def _pack_assignment_detail(db: Session, assignment: Assignment) -> AssignmentDe
 def get_assignment_by_request(
     request_id: str,
     db: Session = Depends(get_db),
-    only_active: bool = Query(True, description="Return only active assignments"),
+    only_active: bool = Query(True, description="Return only non-cancelled/non-failed assignments"),
 ):
     """
     Fetch the (most recent) assignment for a given request.
-    Optionally restricted to active assignment statuses only.
+
+    By default we restrict to "active-like" statuses:
+      created, picked_up, in_transit, completed
+    (we exclude cancelled / failed).
+
+    This is important so that:
+      - the driver can see details during the job
+      - the sender/rider can still see details even after the driver marked
+        the assignment as completed.
     """
     q = db.query(Assignment).filter(Assignment.request_id == request_id)
     if only_active:
@@ -268,7 +278,7 @@ def get_assignment_by_request(
     if not assignment:
         raise HTTPException(
             status_code=404,
-            detail="No active assignment found for this request",
+            detail="No assignment found for this request",
         )
     return _pack_assignment_detail(db, assignment)
 
@@ -296,11 +306,17 @@ def update_assignment_status(
     Update the logistics status of an assignment and stamp the relevant milestone timestamp.
 
     Allowed status transitions:
-      created   → picked_up / cancelled / failed
-      picked_up → in_transit / cancelled / failed
+      created    → picked_up / cancelled / failed
+      picked_up  → in_transit / cancelled / failed
       in_transit → completed / cancelled / failed
 
     Once in completed / cancelled / failed, no further transitions are allowed.
+
+    When status becomes 'completed' and an Escrow exists for this assignment,
+    we also:
+      - set escrows.driver_marked_completed_at = now (if empty)
+      - set escrows.auto_release_at = now + 24h (if empty)
+    The actual release/refund is handled by routes_escrow.py.
     """
     new_status = (payload.status or "").strip()
     if new_status not in VALID_ASSIGNMENT_STATUSES:
@@ -338,6 +354,20 @@ def update_assignment_status(
         assignment.cancelled_at = now
 
     assignment.status = new_status
+
+    # --- Escrow side: driver marked completed + 24h auto-release window ---
+    if (
+        new_status == "completed"
+        and getattr(assignment, "escrow", None) is not None
+    ):
+        esc = assignment.escrow
+        # Mark when driver said "completed"
+        if getattr(esc, "driver_marked_completed_at", None) is None:
+            esc.driver_marked_completed_at = now
+        # Start 24h countdown (only once)
+        if getattr(esc, "auto_release_at", None) is None:
+            esc.auto_release_at = now + timedelta(hours=24)
+        db.add(esc)
 
     db.add(assignment)
     db.commit()
@@ -424,3 +454,67 @@ def list_recent_matches(limit: int = 50, db: Session = Depends(get_db)):
             )
         )
     return out
+
+
+# ---------------------- Confirm delivered (sender/rider) ----------------------
+
+@router.post("/{assignment_id}/confirm-delivered", response_model=AssignmentDetailOut)
+def confirm_assignment_delivered(
+    assignment_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Called by the sender / rider when הם מאשרים שהחבילה/הנסיעה הסתיימה בהצלחה.
+
+    לוגיקה:
+      - מאתרים את ה-assignment לפי id.
+      - מאתרים את ה-escrow (דרך הקשר או לפי assignment_id).
+      - מסמנים שהלקוח אישר קבלה (sender_marked_received_at = now).
+      - אם הסטטוס של ה-escrow עדיין לא סופי, משחררים אותו (status='released'),
+        מנקים auto_release_at, ומעדכנים released_at אם קיים.
+      - מחזירים שוב AssignmentDetailOut מעודכן.
+    """
+    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # Try to get escrow via relationship
+    esc = getattr(assignment, "escrow", None)
+
+    # Fallback: manual query by assignment_id
+    if esc is None:
+        esc = (
+            db.query(Escrow)
+            .filter(Escrow.assignment_id == assignment.id)
+            .first()
+        )
+
+    # If there is no escrow at all, nothing to release – just return details
+    if esc is None:
+        return _pack_assignment_detail(db, assignment)
+
+    now = datetime.now(timezone.utc)
+
+    # Mark that the customer confirmed delivery
+    if getattr(esc, "sender_marked_received_at", None) is None:
+        esc.sender_marked_received_at = now
+
+    # If escrow is not in a terminal state, release it now
+    term_statuses = {"released", "refunded", "cancelled", "failed"}
+    current_status = str(getattr(esc, "status", "") or "").lower()
+
+    if current_status not in term_statuses:
+        esc.status = "released"
+
+        # Optional fields if exist on model:
+        if hasattr(esc, "released_at") and getattr(esc, "released_at", None) is None:
+            esc.released_at = now
+        if hasattr(esc, "auto_release_at"):
+            esc.auto_release_at = None
+
+    db.add(esc)
+    db.add(assignment)
+    db.commit()
+    db.refresh(assignment)
+
+    return _pack_assignment_detail(db, assignment)

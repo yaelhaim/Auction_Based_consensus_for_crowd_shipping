@@ -118,9 +118,9 @@ def list_requests(
     rows = db.execute(
         text(f"""
             SELECT
-                r.id::text           AS id,
+                r.id::text            AS id,
                 r.owner_user_id::text AS owner_user_id,
-                r.type::text         AS type,
+                r.type::text          AS type,
                 r.from_address,
                 r.from_lat,
                 r.from_lon,
@@ -131,8 +131,8 @@ def list_requests(
                 r.notes,
                 r.window_start,
                 r.window_end,
-                r.status::text       AS status,
-                r.max_price::numeric AS max_price,
+                r.status::text        AS status,
+                r.max_price::numeric  AS max_price,
                 MAX(a.agreed_price_cents)::numeric / 100.0 AS agreed_price,
                 r.created_at,
                 r.updated_at
@@ -167,6 +167,4 @@ def list_requests(
         params,
     ).mappings().all()
 
-    # We let FastAPI handle datetime → ISO conversion.
-    # dict(row) already includes max_price (Decimal) and agreed_price (numeric/float-compatible).
     return [dict(r) for r in rows]

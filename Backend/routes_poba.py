@@ -125,6 +125,12 @@ def hex16_to_u8_array_16(s: str) -> List[int]:
 
 
 def get_substrate() -> SubstrateInterface:
+    """
+    Create a fresh SubstrateInterface client.
+
+    Using a new client per call avoids reusing a dead WebSocket connection
+    and reduces the chance of BrokenPipe errors when the node restarts.
+    """
     url = _ws_url()
     preset = _type_registry_preset()
     try:
