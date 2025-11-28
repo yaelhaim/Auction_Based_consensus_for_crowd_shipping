@@ -164,6 +164,60 @@ def update_me(
     db.commit()
     return dict(row)
 
+@router.patch("/me/role")
+def update_my_role(
+    payload: dict,
+    db: Session = Depends(get_db),
+    me = Depends(get_current_user),
+):
+    """
+    Update the 'role' of the current user.
+
+    Expected payload:
+      { "role": "sender" | "driver" | "admin" }
+
+    Notes:
+      - Mobile app will map UI roles:
+          * 'courier'  -> 'driver'
+          * 'sender'   -> 'sender'
+          * 'rider'    -> 'sender'
+    """
+    wallet_address = me["wallet_address"]
+    new_role = (payload.get("role") or "").strip()
+
+    if new_role not in ("sender", "driver", "admin"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    row = db.execute(
+        text(
+            """
+            UPDATE users
+            SET role = :role, updated_at = NOW()
+            WHERE wallet_address = :wa
+            RETURNING
+                id,
+                wallet_address,
+                role,
+                email,
+                phone,
+                city,
+                first_name,
+                last_name,
+                rating,
+                first_login_completed,
+                created_at,
+                updated_at
+            """
+        ),
+        {"role": new_role, "wa": wallet_address},
+    ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.commit()
+    return dict(row)
+
 
 # ---------------------------------------------------------------------
 # Optional routes (keep only if you still need them)

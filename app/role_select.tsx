@@ -16,9 +16,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import AnimatedBgBlobs from "./components/AnimatedBgBlobs";
 
-// ⬅ חשוב: מאחר והקובץ הזה נמצא תחת app/, הנתיב הוא "./lib/..."
 import { registerAndSyncPushToken, getPushDebugReport } from "../lib/push";
-import { BASE_URL } from "../lib/api";
+import { BASE_URL, updateUserRole, type BackendRole } from "../lib/api";
 
 const COLORS = {
   bg: "#ffffff",
@@ -75,9 +74,25 @@ export default function RoleSelectScreen() {
 
   const goNext = useCallback(
     async (role: RoleKey) => {
+      // Map UI role -> backend role
+      // - courier → driver
+      // - sender / rider → sender
+      const backendRole: BackendRole = role === "courier" ? "driver" : "sender";
+
       try {
         await AsyncStorage.setItem("role_today", role);
       } catch {}
+
+      // If we have a token, try to update role in DB (but do not block navigation on failure)
+      if (token) {
+        try {
+          await updateUserRole(String(token), backendRole);
+        } catch (e) {
+          console.log("[RoleSelect] Failed to update backend role:", e);
+        }
+      }
+
+      // Navigate to the chosen home page (UI role)
       router.replace({
         pathname: `/${role}_home_page`,
         params: token ? { token: String(token) } : {},

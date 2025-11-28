@@ -219,6 +219,28 @@ export async function upsertProfile(
   });
 }
 
+/** Backend roles as stored in users.role */
+export type BackendRole = "sender" | "driver" | "admin";
+
+/**
+ * Update the current user's backend role (sender/driver/admin).
+ * UI "courier"/"rider" will be mapped to these values in the screens.
+ */
+export async function updateUserRole(
+  token: string,
+  role: BackendRole
+): Promise<UserRow> {
+  return jsonFetch<UserRow>(`${BASE_URL}/users/me/role`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    timeoutMs: 10000,
+    body: JSON.stringify({ role }),
+  });
+}
+
 // --------------------------- Sender (packages) ------------------------------
 
 /** A request created by a sender or rider. */

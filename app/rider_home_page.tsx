@@ -90,6 +90,16 @@ export default function RiderHome() {
             <Text style={S.userName} numberOfLines={1}>
               {firstName ? `היי, ${firstName}` : "היי!"}
             </Text>
+            <TouchableOpacity
+              style={S.switchBtn}
+              onPress={() =>
+                router.push({ pathname: "/role_select", params: { token } })
+              }
+              activeOpacity={0.85}
+            >
+              <Ionicons name="swap-horizontal" size={16} color={TXT} />
+              <Text style={S.switchLabel}>החלפת תפקיד</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={S.titleWrap}>
@@ -217,7 +227,7 @@ const S = StyleSheet.create({
 
   userBar: {
     flexDirection: "row",
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
     paddingTop: 12,
   },
   userName: { color: TXT, fontSize: 16, fontWeight: "800", textAlign: "right" },
@@ -267,6 +277,21 @@ const S = StyleSheet.create({
     minHeight: 32,
   },
   cardCount: { color: TXT, fontSize: 28, fontWeight: "900", marginTop: 6 },
+
+  switchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.7)",
+  },
+  switchLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: TXT,
+  },
 
   linksCol: { marginTop: 16, gap: 10 },
   linkBtn: {

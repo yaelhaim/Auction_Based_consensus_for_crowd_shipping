@@ -23,6 +23,8 @@ export default function Layout() {
       <Stack.Screen name="rider_home_page" options={{ headerShown: false }} />
       <Stack.Screen name="courier_home_page" options={{ headerShown: false }} />
       <Stack.Screen name="bucket_list" options={{ headerShown: false }} />
+      <Stack.Screen name="payment_details" options={{ headerShown: false }} />
+      <Stack.Screen name="request_details" options={{ headerShown: false }} />
       <Stack.Screen
         name="sender_request_create"
         options={{ headerShown: false }}

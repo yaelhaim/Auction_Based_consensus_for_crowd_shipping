@@ -1,5 +1,5 @@
 // app/payment_details.tsx
-// Simple payment summary screen.
+// Payment summary screen with green gradient background (same vibe as home screens).
 //
 // Flow:
 //  - Opened after escrow creation from assignment_details.
@@ -17,13 +17,20 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import { getAssignmentById, type AssignmentDetailOut } from "../lib/api";
 
-const BG = "#f7f7f5";
+// ---- Brand palette (same as home pages) ----
+const GREEN_1 = "#DDECCB";
+const GREEN_2 = "#CBE1B4";
+const GREEN_3 = "#BFD8A0";
+const GREEN_4 = "#9BAC70";
+
 const TXT = "#0b0b0b";
 const BROWN = "#CDB8A7";
-const CARD_BG = "#ffffff";
+const CARD_BG = "rgba(255,255,255,0.94)";
+const CARD_BORDER = "rgba(0,0,0,0.06)";
 
 type Params = {
   token?: string;
@@ -68,7 +75,7 @@ export default function PaymentDetails() {
   }, [assignmentId]);
 
   const handleDone = () => {
-    // Go back to main home page (you can route per role later if needed)
+    // Go back to main home page (kept as-is; can be changed to role-based redirect if needed)
     router.replace({
       pathname: "/home_page",
       params: { token },
@@ -77,21 +84,35 @@ export default function PaymentDetails() {
 
   if (loading) {
     return (
-      <View style={S.center}>
-        <ActivityIndicator />
-        <Text style={S.sub}>טוען פרטי תשלום…</Text>
-      </View>
+      <LinearGradient
+        colors={[GREEN_1, GREEN_2, GREEN_3, GREEN_4]}
+        start={{ x: 1, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={S.gradient}
+      >
+        <View style={S.center}>
+          <ActivityIndicator />
+          <Text style={S.sub}>טוען פרטי תשלום…</Text>
+        </View>
+      </LinearGradient>
     );
   }
 
   if (error || !assignment) {
     return (
-      <View style={S.center}>
-        <Text style={S.err}>{error || "לא נמצאו נתונים לתשלום"}</Text>
-        <TouchableOpacity onPress={handleDone} style={[S.btn, S.btnBrown]}>
-          <Text style={S.btnText}>חזרה למסך הבית</Text>
-        </TouchableOpacity>
-      </View>
+      <LinearGradient
+        colors={[GREEN_1, GREEN_2, GREEN_3, GREEN_4]}
+        start={{ x: 1, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={S.gradient}
+      >
+        <View style={S.center}>
+          <Text style={S.err}>{error || "לא נמצאו נתונים לתשלום"}</Text>
+          <TouchableOpacity onPress={handleDone} style={[S.btn, S.btnBrown]}>
+            <Text style={S.btnText}>חזרה למסך הבית</Text>
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
     );
   }
 
@@ -115,74 +136,104 @@ export default function PaymentDetails() {
   const toLabel = req?.to_address || "—";
 
   return (
-    <View style={S.page}>
-      <View style={S.header}>
-        <Text style={S.title}>פרטי תשלום</Text>
-        <Text style={S.subtitle}>
-          הפיקדון נוצר בבלוקצ&apos;יין עבור השיוך הנוכחי.
-        </Text>
-      </View>
+    <LinearGradient
+      colors={[GREEN_1, GREEN_2, GREEN_3, GREEN_4]}
+      start={{ x: 1, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={S.gradient}
+    >
+      <View style={S.page}>
+        {/* Header + icon */}
+        <View style={S.header}>
+          <View style={S.headerRow}>
+            <View style={S.iconCircle}>
+              <Ionicons name="card" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={S.title}>פרטי תשלום</Text>
+              <Text style={S.subtitle}>
+                הפיקדון נשמר עבורך במערכת עבור השיוך הנוכחי.
+              </Text>
+            </View>
+          </View>
 
-      <View style={S.card}>
-        <Text style={S.sectionTitle}>סכום התשלום שסוכם</Text>
-        <Text style={S.amount}>{priceLabel}</Text>
-
-        <View style={S.row}>
-          <Text style={S.label}>סטטוס תשלום:</Text>
-          <Text style={S.value}>{paymentStatusLabel}</Text>
+          <View style={S.badgeRow}>
+            <Ionicons name="shield-checkmark" size={16} color="#fff" />
+            <Text style={S.badgeText}>אין חיוב מיידי, רק פיקדון לוגי</Text>
+          </View>
         </View>
 
-        {escrowId && (
+        {/* Amount card */}
+        <View style={S.card}>
+          <Text style={S.sectionTitle}>סכום התשלום שסוכם</Text>
+          <Text style={S.amount}>{priceLabel}</Text>
+
           <View style={S.row}>
-            <Text style={S.label}>מזהה פיקדון:</Text>
-            <Text style={S.valueSmall} numberOfLines={1}>
-              {escrowId}
+            <Text style={S.label}>סטטוס תשלום:</Text>
+            <Text style={S.value}>{paymentStatusLabel}</Text>
+          </View>
+
+          {escrowId && (
+            <View style={S.row}>
+              <Text style={S.label}>מזהה פיקדון:</Text>
+              <Text style={S.valueSmall} numberOfLines={1}>
+                {escrowId}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Assignment details card */}
+        <View style={S.card}>
+          <Text style={S.sectionTitle}>פרטי השיוך</Text>
+          <View style={S.row}>
+            <Text style={S.label}>נהג:</Text>
+            <Text style={S.value}>{driverName}</Text>
+          </View>
+
+          <View style={[S.routePill, { flexDirection: "row" }]}>
+            <Text
+              style={[S.routeText, { textAlign: "left" }]}
+              numberOfLines={1}
+            >
+              {fromLabel}
+            </Text>
+            <Ionicons
+              name="arrow-forward"
+              size={18}
+              color="#6b7280"
+              style={{ marginHorizontal: 10 }}
+            />
+            <Text
+              style={[S.routeText, { textAlign: "right" }]}
+              numberOfLines={1}
+            >
+              {toLabel}
             </Text>
           </View>
-        )}
-      </View>
-
-      <View style={S.card}>
-        <Text style={S.sectionTitle}>פרטי השיוך</Text>
-        <View style={S.row}>
-          <Text style={S.label}>נהג:</Text>
-          <Text style={S.value}>{driverName}</Text>
         </View>
 
-        <View style={[S.routePill, { flexDirection: "row" }]}>
-          <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
-            {fromLabel}
+        {/* Explanation card */}
+        <View style={S.card}>
+          <Text style={S.sectionTitle}>מה קורה עכשיו?</Text>
+          <Text style={S.body}>
+            בשלב זה לא מתבצע חיוב בכרטיס אשראי. המערכת רק שומרת פיקדון לוגי
+            בבלוקצ&apos;יין שמייצג התחייבות לתשלום לנהג בסיום המשלוח.
           </Text>
-          <Ionicons
-            name="arrow-forward"
-            size={18}
-            color="#6b7280"
-            style={{ marginHorizontal: 10 }}
-          />
-          <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
-            {toLabel}
+          <Text style={S.body}>
+            לאחר שהמשלוח יסומן כמושלם ותאשר/י את המסירה, הפיקדון יסומן כתשלום
+            שיש להעביר לנהג (לפי המנגנון שנקבע מחוץ לאפליקציה).
           </Text>
         </View>
-      </View>
 
-      <View style={S.card}>
-        <Text style={S.sectionTitle}>מה קורה עכשיו?</Text>
-        <Text style={S.body}>
-          בשלב זה לא מתבצע חיוב בכרטיס אשראי. המערכת רק שומרת פיקדון לוגי
-          בבלוקצ&apos;יין שמייצג התחייבות לתשלום לנהג בסיום המשלוח.
-        </Text>
-        <Text style={S.body}>
-          לאחר שהמשלוח יסומן כמושלם ותאשר/י את המסירה, הפיקדון יסומן כתשלום שיש
-          להעביר לנהג (לפי המנגנון שנבחר מחוץ לאפליקציה).
-        </Text>
+        {/* Footer button */}
+        <View style={S.footer}>
+          <TouchableOpacity onPress={handleDone} style={[S.btn, S.btnBrown]}>
+            <Text style={S.btnText}>אישור, אפשר להמשיך</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
-      <View style={S.footer}>
-        <TouchableOpacity onPress={handleDone} style={[S.btn, S.btnBrown]}>
-          <Text style={S.btnText}>אישור, אפשר להמשיך</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -211,92 +262,125 @@ function prettyPaymentStatus(s?: string | null) {
 /* ---------------- styles ---------------- */
 
 const S = StyleSheet.create({
+  gradient: {
+    flex: 1,
+  },
   page: {
     flex: 1,
-    backgroundColor: BG,
     paddingHorizontal: 16,
     paddingTop: 32,
     paddingBottom: 16,
   },
   center: {
     flex: 1,
-    backgroundColor: BG,
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
     paddingHorizontal: 16,
   },
-  sub: { fontSize: 14, color: "#6b7280" },
+  sub: { fontSize: 14, color: "#374151" },
   err: { fontSize: 14, color: "#b91c1c", textAlign: "center" },
 
   header: {
     marginBottom: 12,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 8,
+  },
+  iconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: BROWN,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   title: {
-    fontSize: 24,
-    fontWeight: "800",
+    fontSize: 22,
+    fontWeight: "900",
     color: TXT,
-    textAlign: "right",
+    textAlign: "left",
   },
   subtitle: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginTop: 4,
-    textAlign: "right",
+    fontSize: 13,
+    color: "#374151",
+    marginTop: 2,
+    textAlign: "left",
+  },
+
+  badgeRow: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  badgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "600",
   },
 
   card: {
     backgroundColor: CARD_BG,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 14,
     marginTop: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: CARD_BORDER,
     shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    elevation: 2,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: TXT,
-    marginBottom: 8,
-    textAlign: "right",
-  },
-  amount: {
-    fontSize: 24,
+    fontSize: 15,
     fontWeight: "800",
     color: TXT,
-    marginBottom: 12,
-    textAlign: "right",
+    marginBottom: 8,
+    textAlign: "left",
+  },
+  amount: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: TXT,
+    marginBottom: 10,
+    textAlign: "left",
   },
   row: {
-    flexDirection: "row-reverse",
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginTop: 4,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#6b7280",
     marginLeft: 8,
   },
   value: {
     fontSize: 14,
     color: TXT,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   valueSmall: {
-    fontSize: 12,
+    fontSize: 11,
     color: TXT,
     flex: 1,
     textAlign: "left",
   },
   body: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#374151",
     lineHeight: 20,
-    textAlign: "right",
+    textAlign: "left",
     marginTop: 4,
   },
 
@@ -324,15 +408,18 @@ const S = StyleSheet.create({
   btn: {
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 12,
+    borderRadius: 999,
     alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   btnBrown: {
     backgroundColor: BROWN,
   },
   btnText: {
     color: "#fff",
-    fontWeight: "800",
+    fontWeight: "900",
     fontSize: 15,
   },
 });

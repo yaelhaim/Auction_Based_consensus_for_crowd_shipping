@@ -1,6 +1,5 @@
 // app/assignment_details.tsx
 // Driver-safe matching (no fake matches): prefer server data by assignment_id.
-// Comments are in English; UI strings in Hebrew.
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -381,9 +380,13 @@ export default function AssignmentDetails() {
   // Treat both "ride" and legacy "passenger" as ride
   const t = ((req?.type as string) || "").toLowerCase();
   const isRide = t === "ride" || t === "passenger";
-  const kind = isRide
-    ? "יש לך טרמפ לעשות, איזה כיף!"
-    : "יש לך חבילה לאסוף, איזה כיף!";
+
+  // Determine user role for text selection (default to "sender" for safety)
+  const roleStr: Role = (role as Role) || "sender";
+
+  // Role-aware headline text for driver vs sender/rider
+  const kind = getKindLabel(roleStr, isRide);
+
   const heroImage = isRide ? rideImg : pkgImg;
 
   const callEnabled = !!d.phone;
@@ -493,6 +496,28 @@ export default function AssignmentDetails() {
 }
 
 /* ---------------- helpers & small components ---------------- */
+
+// Role-aware headline text
+function getKindLabel(role: Role, isRide: boolean): string {
+  // Driver sees "you have a ride/package to do"
+  if (role === "driver") {
+    return isRide
+      ? "יש לך טרמפ לעשות, איזה כיף!"
+      : "יש לך חבילה לאסוף, איזה כיף!";
+  }
+
+  // Sender (package owner)
+  if (role === "sender") {
+    return isRide
+      ? "איזה כיף, מצאנו לך נהג!"
+      : "איזה כיף, מצאנו נהג שיקח את החבילה שלך!";
+  }
+
+  // Rider (passenger)
+  return isRide
+    ? "איזה כיף, מצאנו לך נהג שיסיע אותך!"
+    : "איזה כיף, מצאנו לך נהג!";
+}
 
 function prettyStatus(s: string) {
   return s.replaceAll("_", " ");
@@ -653,7 +678,7 @@ const S = StyleSheet.create({
   sub: { fontSize: 14, opacity: 0.7 },
   err: { color: "#b91c1c", fontWeight: "700" },
 
-  kind: { fontSize: 22, fontWeight: "800", color: TXT },
+  kind: { fontSize: 18, fontWeight: "800", color: TXT },
 
   routePill: {
     alignSelf: "center",
