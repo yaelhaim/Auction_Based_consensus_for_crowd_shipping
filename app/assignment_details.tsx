@@ -32,7 +32,7 @@ import {
 
 // ---- Theme & layout constants ----
 const GREEN = "#9BAC70";
-const BROWN = "#CDB8A7"; // softer taupe-brown accent
+const BROWN = "#AF947E"; // softer taupe-brown accent
 const BG = "#f7f7f5";
 const TXT = "#0b0b0b";
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
@@ -594,16 +594,16 @@ function RoutePillLTR({
   return (
     <View style={S.routePill}>
       <View style={[S.routeRow, { flexDirection: "row" }]}>
-        <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
+        <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
           {from || "—"}
         </Text>
         <Ionicons
           name="arrow-forward"
           size={18}
           color="#6b7280"
-          style={{ marginHorizontal: 10 }}
+          style={{ marginHorizontal: 10, transform: [{ scaleX: -1 }] }}
         />
-        <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
+        <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
           {to || "—"}
         </Text>
       </View>

@@ -43,7 +43,11 @@ type Params = {
 // Force LTR segments inside RTL (dates, times, arrows)
 const LRM = "\u200E";
 const ltr = (seg: string) => `${LRM}${seg}${LRM}`;
-const arrow = (from: string, to: string) => `${from} ${ltr("→")} ${to}`;
+const arrow = (from: string, to: string) => {
+  const fromSafe = from || "";
+  const toSafe = to || "";
+  return `${ltr(toSafe)} ${ltr("←")} ${ltr(fromSafe)}`;
+};
 
 const fmt2 = (n: number) => String(n).padStart(2, "0");
 function fmtDate(iso?: string | null) {
@@ -387,7 +391,6 @@ function SenderCard({ it }: { it: RequestRow }) {
             <View style={S.chip}>
               <Text style={S.chipTxt}>{status}</Text>
             </View>
-            <Text style={S.windowLabel}>חלון</Text>
           </View>
           <Text style={S.meta}>{win}</Text>
         </View>
@@ -447,7 +450,6 @@ function RiderCard({ it }: { it: RiderRequestRow }) {
             <View style={S.chip}>
               <Text style={S.chipTxt}>{status}</Text>
             </View>
-            <Text style={S.windowLabel}>חלון</Text>
           </View>
           <Text style={S.meta}>{win}</Text>
         </View>
@@ -522,7 +524,6 @@ function CourierJobCard({
             <View style={S.chip}>
               <Text style={S.chipTxt}>{status}</Text>
             </View>
-            <Text style={S.windowLabel}>חלון</Text>
           </View>
           <Text style={S.meta}>{win}</Text>
         </View>
@@ -562,7 +563,6 @@ function OfferCard({ it }: { it: CourierOfferRow }) {
             <View style={S.chip}>
               <Text style={S.chipTxt}>זמינות פעילה</Text>
             </View>
-            <Text style={S.windowLabel}>חלון</Text>
           </View>
           <Text style={S.meta}>{range}</Text>
         </View>
@@ -644,7 +644,6 @@ const S = StyleSheet.create({
     textAlign: "left",
   },
 
-  // RTL row: right side shows status + "חלון", left side shows times
   row: {
     flexDirection: "row-reverse",
     alignItems: "flex-start",

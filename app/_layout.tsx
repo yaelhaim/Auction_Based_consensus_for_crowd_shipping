@@ -7,7 +7,6 @@ import { Stack } from "expo-router";
 import { ensurePushSetup } from "../lib/push";
 
 export default function Layout() {
-  // פעם אחת באתחול — הרשאות + Android channel
   useEffect(() => {
     ensurePushSetup();
   }, []);

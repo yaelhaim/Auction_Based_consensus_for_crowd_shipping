@@ -28,7 +28,7 @@ const GREEN_3 = "#BFD8A0";
 const GREEN_4 = "#9BAC70";
 
 const TXT = "#0b0b0b";
-const BROWN = "#CDB8A7";
+const BROWN = "#AF947E";
 const CARD_BG = "rgba(255,255,255,0.94)";
 const CARD_BORDER = "rgba(0,0,0,0.06)";
 
@@ -202,7 +202,7 @@ export default function PaymentDetails() {
               name="arrow-forward"
               size={18}
               color="#6b7280"
-              style={{ marginHorizontal: 10 }}
+              style={{ marginHorizontal: 10, transform: [{ scaleX: -1 }] }}
             />
             <Text
               style={[S.routeText, { textAlign: "right" }]}
@@ -268,7 +268,7 @@ const S = StyleSheet.create({
   page: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 32,
+    paddingTop: 60,
     paddingBottom: 16,
   },
   center: {

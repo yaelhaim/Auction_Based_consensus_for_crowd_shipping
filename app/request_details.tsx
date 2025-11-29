@@ -1,7 +1,6 @@
 // app/request_details.tsx
 // Task details screen: shows full assignment info.
 // Driver can update assignment status; sender confirms package received; rider confirms arrival.
-// Comments in English. User-facing text in Hebrew.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -16,6 +15,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, Stack } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
 import {
   getAssignmentById,
   getAssignmentByRequest,
@@ -247,13 +247,7 @@ export default function RequestDetailsScreen() {
     }
   };
 
-  // Customer (sender/rider) confirmation:
-  // For both sender and rider we want:
-  //   - logistics already completed (assignment.status === 'completed')
-  //   - Escrow flow to exist or be allowed (payment_status == null / pending_deposit / deposited)
-  //   - Then we call /escrows/confirm-delivered which:
-  //       * releases escrow on-chain
-  //       * updates assignment + request statuses in the DB.
+  // Customer (sender/rider) confirmation.
   const hasAnyId = !!assignment_id || !!request_id || !!data?.assignment_id;
 
   const canConfirmDelivered =
@@ -274,15 +268,8 @@ export default function RequestDetailsScreen() {
     try {
       setConfirmingDelivered(true);
 
-      // Sender + rider: both go through the escrow confirm endpoint.
-      // Backend handles both ride and package flows and also updates
-      // Request/Assignment/payment statuses.
       await confirmEscrowDelivered(String(token), String(aid));
 
-      // After escrow release, reload assignment detail so:
-      //   - payment_status becomes "released"
-      //   - request.status might become "completed"
-      //   - lists of active/completed can reflect the new state.
       const refreshed = await getAssignmentById(String(aid));
       setData(refreshed);
     } catch (e: any) {
@@ -299,7 +286,7 @@ export default function RequestDetailsScreen() {
     <View style={{ flex: 1 }}>
       <Stack.Screen
         options={{
-          headerTitle: "פרטי משימה",
+          headerTitle: "פרטי בקשה",
           headerTintColor: "#000",
           headerTitleAlign: "center",
         }}
@@ -313,7 +300,7 @@ export default function RequestDetailsScreen() {
         {loading ? (
           <View style={S.centerBox}>
             <ActivityIndicator color={COLORS.primaryDark} />
-            <Text style={S.centerTxt}>טוען פרטי משימה…</Text>
+            <Text style={S.centerTxt}>טוען פרטי בקשה…</Text>
           </View>
         ) : err ? (
           <View style={S.centerBox}>
@@ -324,18 +311,36 @@ export default function RequestDetailsScreen() {
           </View>
         ) : !data ? (
           <View style={S.centerBox}>
-            <Text style={S.errorTxt}>לא נמצאו נתונים למשימה</Text>
+            <Text style={S.errorTxt}>לא נמצאו נתונים לבקשה</Text>
           </View>
         ) : (
           <ScrollView contentContainerStyle={S.scrollContent}>
-            {/* Route title */}
-            <View style={S.card}>
-              <Text style={S.title}>
-                {data.request.from_address || "מוצא לא ידוע"} {ltr("→")}{" "}
-                {data.request.to_address || "יעד לא ידוע"}
-              </Text>
+            {/* Page title */}
+            <Text style={S.pageTitle}>פרטי בקשה</Text>
 
-              {/* Status + window */}
+            {/* Hero card: route + quick status */}
+            <View style={[S.card, S.heroCard]}>
+              <View style={S.heroTopRow}>
+                <View style={S.iconCircle}>
+                  <Ionicons
+                    name={
+                      data.request.type === "package"
+                        ? "cube-outline"
+                        : "car-outline"
+                    }
+                    size={22}
+                    color="#fff"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={S.title}>
+                    {data.request.to_address || "יעד לא ידוע"} {ltr("←")}{" "}
+                    {data.request.from_address || "מוצא לא ידוע"}
+                  </Text>
+                  <Text style={S.heroSub}>{winText}</Text>
+                </View>
+              </View>
+
               <View style={S.row}>
                 <View style={S.rightRow}>
                   <View style={S.chip}>
@@ -343,9 +348,15 @@ export default function RequestDetailsScreen() {
                       {statusHebrew(data.status || "")}
                     </Text>
                   </View>
-                  <Text style={S.windowLabel}>חלון</Text>
+                  <View style={S.chipSoft}>
+                    <Text style={S.chipSoftTxt}>
+                      {data.request.type === "package" ? "משלוח" : "טרמפ"}
+                    </Text>
+                  </View>
                 </View>
-                <Text style={S.meta}>{winText}</Text>
+                <Text style={S.meta}>
+                  {paymentStatusHebrew(data.payment_status)}
+                </Text>
               </View>
 
               {/* Type + price */}
@@ -360,10 +371,6 @@ export default function RequestDetailsScreen() {
                 }
               />
               <DetailLine label="מחיר מוסכם" value={priceText} />
-              <DetailLine
-                label="סטטוס תשלום"
-                value={paymentStatusHebrew(data.payment_status)}
-              />
 
               {/* People */}
               {data.request.pickup_contact_name ? (
@@ -603,13 +610,21 @@ const S = StyleSheet.create({
   gradient: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 70,
     paddingBottom: 24,
   },
   scrollContent: {
     paddingTop: 12,
     paddingBottom: 96,
     gap: 12,
+  },
+  pageTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: COLORS.text,
+    textAlign: "center",
+    marginTop: -10,
+    marginBottom: 10,
   },
   centerBox: {
     flex: 1,
@@ -649,11 +664,39 @@ const S = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
+
+  // Hero card tweaks
+  heroCard: {
+    borderRadius: 22,
+    paddingTop: 16,
+    paddingBottom: 18,
+  },
+  heroTopRow: {
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroSub: {
+    fontSize: 13,
+    color: COLORS.dim,
+    fontWeight: "700",
+    textAlign: "left",
+  },
+
   title: {
     fontWeight: "900",
     color: COLORS.text,
     fontSize: 18,
-    marginBottom: 8,
+    marginBottom: 2,
     textAlign: "left",
   },
   cardTitle: {
@@ -686,6 +729,17 @@ const S = StyleSheet.create({
   chipTxt: {
     color: "#fff",
     fontWeight: "900",
+    fontSize: 12,
+  },
+  chipSoft: {
+    backgroundColor: "rgba(0,0,0,0.05)",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+  },
+  chipSoftTxt: {
+    color: COLORS.text,
+    fontWeight: "800",
     fontSize: 12,
   },
   windowLabel: {
