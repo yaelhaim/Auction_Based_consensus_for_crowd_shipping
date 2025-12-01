@@ -31,11 +31,16 @@ from .routes_devices import router as devices_router
 from .routes_auction import router as auction_router
 from .routes_assignments import router as assignments_router
 from .routes_matching import router as matching_router
-from .routes_poba import router as poba_router
+from .routes_poba import router as poba_router, install_poba_slot_listener
 from .routes_escrow import router as escrow_router
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# --------------------------- Auto-matcher toggle ---------------------------
+# Legacy IDA* auto-clearing loop (scheduler) can be globally enabled/disabled
+# via env var. Default: disabled (BID_AUTO_MATCHER != "1").
+AUTO_MATCHER_ENABLED = os.getenv("BID_AUTO_MATCHER", "0") == "1"
 
 # Clearing tick (IDA*)
 try:
@@ -60,7 +65,12 @@ def _setup_logger(name: str, filename: str) -> logging.Logger:
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s')
 
-    fh = RotatingFileHandler(os.path.join(LOG_DIR, filename), maxBytes=2_000_000, backupCount=5, encoding="utf-8")
+    fh = RotatingFileHandler(
+        os.path.join(LOG_DIR, filename),
+        maxBytes=2_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
     fh.setFormatter(fmt)
 
     sh = logging.StreamHandler(sys.stdout)
@@ -75,6 +85,8 @@ def _setup_logger(name: str, filename: str) -> logging.Logger:
 
 _setup_logger("clearing", "clearing.log")
 _setup_logger("match", "matches.log")
+_setup_logger("poba", "poba.log")
+
 
 logger = logging.getLogger("clearing")
 scheduler = AsyncIOScheduler()
@@ -97,10 +109,18 @@ def _clearing_job():
 async def lifespan(app: FastAPI):
     # ---- Startup ----
     try:
-        # IDA* clearing every 60 seconds (adjust as needed)
-        scheduler.add_job(_clearing_job, IntervalTrigger(seconds=60))
-        scheduler.start()
-        logger.info("Scheduler started (IDA* every 60s)")
+        if AUTO_MATCHER_ENABLED:
+            # IDA* clearing every 60 seconds (legacy auto-matcher loop)
+            scheduler.add_job(_clearing_job, IntervalTrigger(seconds=60))
+            scheduler.start()
+            logger.info(
+                "Scheduler started (IDA* every 60s, BID_AUTO_MATCHER=1)"
+            )
+        else:
+            # Auto-matcher is disabled: do not start scheduler at all
+            logger.info(
+                "Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started"
+            )
     except Exception as e:  # pragma: no cover
         logger.exception("Failed to start scheduler: %s", e)
 
@@ -156,7 +176,7 @@ def db_health(db: Session = Depends(get_db)):
 def db_info(db: Session = Depends(get_db)):
     """Quick DB identity (database, user, schema)."""
     row = db.execute(
-        text("SELECT current_database() as db, current_user as user, current_schema() as schema")
+        text("SELECT current_database() as db, current_user as user, current_schema as schema")
     ).mappings().first()
     return dict(row)
 
@@ -174,3 +194,6 @@ app.include_router(assignments_router)
 app.include_router(matching_router)
 app.include_router(poba_router)
 app.include_router(escrow_router)
+
+
+install_poba_slot_listener(app)

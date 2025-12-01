@@ -188,14 +188,16 @@ async def defer_push_for_request(
   current_user = Depends(get_current_user),
 ):
   """
-  Stores requests.push_defer_until = now + seconds (default 60).
-  Push notifications for this request should be sent ONLY if now >= push_defer_until.
+  TEMPORARILY DISABLED:
+  We keep this endpoint for compatibility with the app,
+  but it does NOT update requests.push_defer_until anymore.
+  This avoids hiding the request from /poba/requests-open during PoBA debugging.
   """
   uid = _user_id(current_user)
   if not uid:
     raise HTTPException(status_code=401, detail="Unauthorized")
 
-  # verify ownership
+  # verify ownership (still enforced)
   sel = text("SELECT owner_user_id FROM requests WHERE id = :rid")
   try:
     if hasattr(db, "execute"):
@@ -212,25 +214,15 @@ async def defer_push_for_request(
   if str(owner_row["owner_user_id"]) != str(uid):
     raise HTTPException(403, detail="not your request")
 
-  defer_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-  upd = text("UPDATE requests SET push_defer_until = :ts WHERE id = :rid")
+  # IMPORTANT: no DB update to push_defer_until here.
+  # We just return a dummy timestamp indicating "no real defer".
+  defer_until = datetime.now(timezone.utc)
 
-  try:
-    if hasattr(db, "execute"):
-      db.execute(upd, {"ts": defer_until, "rid": request_id})
-      if hasattr(db, "commit"):
-        db.commit()
-    else:
-      await db.execute(upd, {"ts": defer_until, "rid": request_id})
-      await db.commit()
-  except Exception as e:
-    print("[/requests/defer_push] update error:", repr(e))
-    raise HTTPException(
-      500,
-      detail="DB missing column requests.push_defer_until. Add it and retry.",
-    )
-
-  return {"ok": True, "push_defer_until": defer_until.isoformat()}
+  return {
+    "ok": True,
+    "push_defer_until": defer_until.isoformat(),
+    "note": "defer_push temporarily disabled for PoBA debug; no DB change performed",
+  }
 
 # ---------- Match status for waiting screen ----------
 @router.get("/requests/{request_id}/match_status")

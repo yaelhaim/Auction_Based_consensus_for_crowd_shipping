@@ -1,5 +1,3 @@
-//pallets/poba/src/lib.rs
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
 // --------------------------- Imports & Prelude ---------------------------
@@ -73,10 +71,20 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        /// A proposal was submitted for `slot` with `total_score` and `matches` count.
-        ProposalSubmitted { slot: u64, total_score: i64, matches: u32 },
+        /// A proposal was submitted for `slot` with `total_score` and `matches` count,
+        /// including the account that submitted it.
+        ProposalSubmitted {
+            slot: u64,
+            total_score: i64,
+            matches: u32,
+            proposer: T::AccountId,
+        },
         /// The slot was finalized with the winning `total_score` and `matches` count.
-        SlotFinalized     { slot: u64, total_score: i64, matches: u32 },
+        SlotFinalized     {
+            slot: u64,
+            total_score: i64,
+            matches: u32,
+        },
     }
 
     // -------- Errors --------
@@ -107,7 +115,8 @@ pub mod pallet {
             // (request_uuid, offer_uuid, agreed_price_cents, partial_score)
             matches: Vec<([u8; 16], [u8; 16], u32, i64)>,
         ) -> DispatchResult {
-            let _who = ensure_signed(origin)?;
+            // מי הגיש את ההצעה (Alice / Bob וכו')
+            let who = ensure_signed(origin)?;
 
             // Convert tuples → Match → BoundedVec
             let mut tmp: Vec<Match> = Vec::with_capacity(matches.len());
@@ -125,28 +134,33 @@ pub mod pallet {
             // Reject empty proposals
             ensure!(!bounded.is_empty(), Error::<T>::EmptyMatches);
 
+            let matches_len: u32 = bounded.len() as u32;
+            let proposal = Proposal {
+                total_score,
+                matches: bounded,
+            };
+
+            // לעדכן BestProposal רק אם זו ההצעה הראשונה לסלוט
+            // או אם היא משפרת את total_score, אבל:
+            // *תמיד* נייצר אירוע ProposalSubmitted (גם אם לא שיפרנו).
             match BestProposal::<T>::get(slot) {
                 Some(existing) => {
                     if total_score > existing.total_score {
-                        let new_best = Proposal { total_score, matches: bounded };
-                        BestProposal::<T>::insert(slot, &new_best);
-                        Self::deposit_event(Event::ProposalSubmitted {
-                            slot,
-                            total_score,
-                            matches: new_best.matches.len() as u32,
-                        });
+                        BestProposal::<T>::insert(slot, &proposal);
                     }
                 }
                 None => {
-                    let new_best = Proposal { total_score, matches: bounded };
-                    BestProposal::<T>::insert(slot, &new_best);
-                    Self::deposit_event(Event::ProposalSubmitted {
-                        slot,
-                        total_score,
-                        matches: new_best.matches.len() as u32,
-                    });
+                    BestProposal::<T>::insert(slot, &proposal);
                 }
             }
+
+            // 🔔 אירוע תמידי – כל הגשה נרשמת, כולל מי הגיש
+            Self::deposit_event(Event::ProposalSubmitted {
+                slot,
+                total_score,
+                matches: matches_len,
+                proposer: who,
+            });
 
             Ok(())
         }
@@ -160,13 +174,15 @@ pub mod pallet {
             let winner = BestProposal::<T>::take(slot).ok_or(Error::<T>::NoProposalForSlot)?;
             ensure!(!winner.matches.is_empty(), Error::<T>::NoProposalForSlot);
 
+            let matches_len = winner.matches.len() as u32;
+
             FinalizedProposal::<T>::insert(slot, &winner);
             LastFinalizedSlot::<T>::put(slot);
 
             Self::deposit_event(Event::SlotFinalized {
                 slot,
                 total_score: winner.total_score,
-                matches: winner.matches.len() as u32,
+                matches: matches_len,
             });
 
             Ok(())

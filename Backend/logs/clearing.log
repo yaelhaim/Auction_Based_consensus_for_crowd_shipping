@@ -5306,3 +5306,212 @@ sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) could not translate
 2025-11-29 20:44:34,348 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 1, 'filtered_by_type': 0, 'filtered_by_time': 0, 'filtered_by_price': 0}}
 2025-11-29 20:45:34,312 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 1, 'filtered_by_type': 0, 'filtered_by_time': 0, 'filtered_by_price': 0}}
 2025-11-29 20:46:20,198 INFO clearing Scheduler stopped
+2025-11-29 21:00:33,994 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 21:01:36,271 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 1, 'filtered_by_type': 0, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 21:02:34,465 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 1, 'filtered_by_type': 0, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 21:03:34,252 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:04:34,245 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:05:34,412 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 21:06:34,242 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:07:34,251 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:08:34,257 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:09:22,532 INFO clearing Scheduler stopped
+2025-11-29 21:38:06,910 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 21:39:07,197 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:40:07,167 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:41:07,194 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:42:07,169 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:43:07,172 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:44:07,216 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:45:07,168 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:46:07,217 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:47:07,173 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:48:07,211 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:49:07,163 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:50:07,158 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:51:07,172 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:52:07,164 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:53:07,165 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:54:07,167 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 21:54:07,683 INFO clearing Scheduler stopped
+2025-11-29 22:01:11,889 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 22:02:12,960 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:03:12,145 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:04:12,142 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:05:12,219 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:06:12,257 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:07:12,138 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:08:12,217 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:09:12,255 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:10:12,157 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:10:42,904 INFO clearing Scheduler stopped
+2025-11-29 22:23:20,671 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 22:24:20,985 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:25:20,935 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:26:20,930 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:27:20,927 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:28:20,940 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:29:20,936 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:30:20,938 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:31:20,925 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:32:20,930 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:33:20,960 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:34:20,924 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:35:20,928 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:36:20,961 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:36:23,683 INFO clearing Scheduler stopped
+2025-11-29 22:40:06,774 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 22:41:07,050 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:42:07,043 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:43:07,195 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 22:43:37,152 INFO clearing Scheduler stopped
+2025-11-29 22:51:15,370 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 22:52:15,650 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:53:18,728 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:54:15,622 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no open requests with coordinates'}
+2025-11-29 22:55:15,837 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 22:56:15,860 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 22:57:15,878 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 22:58:15,843 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 22:59:15,856 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:00:15,790 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:01:15,791 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:02:15,793 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:03:15,793 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:04:15,790 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:05:15,787 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:06:15,794 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:07:15,800 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:07:52,139 INFO clearing Scheduler stopped
+2025-11-29 23:18:46,911 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 23:19:47,463 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:20:47,337 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 2, 'filtered_by_type': 1, 'filtered_by_time': 0, 'filtered_by_price': 0}}
+2025-11-29 23:21:47,347 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 23:22:47,332 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 23:23:47,339 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:24:47,343 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:25:47,343 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:26:47,341 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:27:47,342 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:28:47,408 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:29:47,421 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:30:47,357 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:31:47,339 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:32:47,341 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:33:47,339 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:34:47,350 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:35:47,387 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:36:47,478 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:37:47,344 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:38:47,335 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:39:47,367 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:39:50,396 INFO clearing Scheduler stopped
+2025-11-29 23:39:52,440 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 23:40:05,972 INFO clearing Scheduler stopped
+2025-11-29 23:40:14,816 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-29 23:41:16,461 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:42:15,246 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 6, 'filtered_by_type': 2, 'filtered_by_time': 1, 'filtered_by_price': 0}}
+2025-11-29 23:43:15,255 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-29 23:44:15,235 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 12, 'filtered_by_type': 3, 'filtered_by_time': 2, 'filtered_by_price': 0}}
+2025-11-29 23:44:56,968 INFO clearing Scheduler stopped
+2025-11-30 09:10:44,054 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 09:11:08,610 INFO clearing Scheduler stopped
+2025-11-30 09:23:44,690 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 09:24:45,145 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:25:45,130 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:26:45,116 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no optimal plan found', 'debug': {'expanded': 0, 'matched': 0, 'skipped': 1}, 'debug_counts': {'total_pairs_checked': 15, 'filtered_by_type': 3, 'filtered_by_time': 5, 'filtered_by_price': 0}}
+2025-11-30 09:27:45,123 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:28:45,123 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:29:45,124 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:29:55,900 INFO clearing Scheduler stopped
+2025-11-30 09:45:12,052 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 09:46:12,484 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:47:12,542 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:48:12,477 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:49:12,463 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:50:12,575 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:51:12,467 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:52:12,653 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:53:12,480 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:54:12,504 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:55:12,472 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:56:12,474 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:57:12,473 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:58:12,473 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 09:59:12,464 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:00:12,466 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:01:12,473 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:02:12,496 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:03:12,473 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:04:12,488 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:05:12,565 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:05:39,909 INFO clearing Scheduler stopped
+2025-11-30 10:06:56,359 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 10:07:57,877 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:08:56,799 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:09:56,870 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:10:56,786 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:11:37,131 INFO clearing Scheduler stopped
+2025-11-30 10:13:59,052 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 10:14:59,489 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:16:02,331 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:16:59,483 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:17:59,551 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:18:59,488 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:19:59,499 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:20:59,482 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:21:59,486 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:22:59,554 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:23:59,485 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:24:59,492 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:25:59,539 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:26:59,490 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:27:59,494 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:28:59,545 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:29:59,516 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:30:49,886 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 10:30:53,823 INFO clearing Scheduler stopped
+2025-11-30 10:32:58,309 INFO clearing Scheduler started (IDA* every 60s)
+2025-11-30 10:33:58,807 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:34:58,836 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:35:58,743 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:36:58,738 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:37:58,860 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:38:58,763 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:39:58,742 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:40:58,738 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:41:58,738 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:42:58,738 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:43:58,788 INFO clearing Clearing tick result: {'cleared': False, 'reason': 'no valid drivers for offers'}
+2025-11-30 10:44:33,336 INFO clearing Scheduler stopped
+2025-11-30 10:44:35,081 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 10:53:05,478 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 12:59:59,072 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 13:01:03,621 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 13:12:42,094 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 13:27:26,158 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 13:34:49,046 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 13:43:58,419 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 14:40:24,592 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 14:57:11,526 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 15:14:32,398 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 15:35:36,821 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 18:20:01,609 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:02:43,983 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:03:26,592 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:03:50,491 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:12:02,999 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:20:13,848 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:23:14,032 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-11-30 19:38:04,863 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 10:11:56,294 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 10:15:40,211 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 10:18:57,061 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 10:27:37,919 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 13:16:59,410 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 15:42:29,151 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 18:24:02,062 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 18:55:36,959 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 19:36:07,517 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 20:13:40,219 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started
+2025-12-01 20:15:26,156 INFO clearing Auto-matcher disabled (BID_AUTO_MATCHER != 1) — scheduler not started

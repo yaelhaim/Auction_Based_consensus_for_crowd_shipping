@@ -54,7 +54,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: alloc::borrow::Cow::Borrowed("solochain-template-runtime"),
     impl_name: alloc::borrow::Cow::Borrowed("solochain-template-runtime"),
     authoring_version: 1,
-    spec_version: 103, // ⬅️ העליתי כדי להחיל את שינויי המטא-דאטה
+    spec_version: 104, 
     impl_version: 1,
     apis: apis::RUNTIME_API_VERSIONS,
     transaction_version: 1,

@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # Auto-matching pipeline for BidDrop:
 # When a request or an offer is created in the backend, we "poke" this module
-# to run a short pipeline *in the background*:
+# to run a short pipeline:
 #   1) GET   /poba/requests-open
 #   2) GET   /poba/offers-active
 #   3) POST  /poba/build-proposal       ← IDA*-based builder (same as your curl)
@@ -12,7 +12,6 @@
 # Notes:
 # - This file only orchestrates endpoints. Business logic stays in your routes.
 # - Debounce + a run-lock prevent flooding and overlapping runs.
-# - Safe to call try_auto_match() after *any* create (request/offer).
 #
 # Env vars:
 #   BID_AUTO_MATCH=1                       → enable background runner (default off)
@@ -32,7 +31,7 @@ from __future__ import annotations
 import os
 import time
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import requests  # lightweight HTTP client
 
@@ -69,6 +68,48 @@ def _now() -> float:
 def _log(*args: Any) -> None:
     print("[auto-match]", *args)
 
+
+def _get_current_slot() -> int:
+    """
+    Derive the current PoBA slot from /poba/chain-health.
+
+    We reuse the same logic as the manual curl script:
+    - Call /poba/chain-health
+    - Read best_header.result.number (hex string, e.g. "0x1a")
+    - Convert it to an integer and use it as the slot.
+
+    If anything fails, we fall back to a time-based slot to avoid crashing
+    the pipeline, but that is not ideal for PoBA semantics.
+    """
+    try:
+        data = _get_json(f"{AUTO_BASE}/poba/chain-health")
+        # Expected shape: {"best_header": {"result": {"number": "0x..." }}, ...}
+        best_header = data.get("best_header") or {}
+        result = best_header.get("result") or {}
+        hex_num = result.get("number")
+
+        if isinstance(hex_num, str) and hex_num.startswith("0x"):
+            slot = int(hex_num, 16)
+            _log("current slot from chain-health:", slot)
+            return slot
+
+        # If number is already an int-like, try to cast directly
+        if isinstance(hex_num, (int, float)):
+            slot = int(hex_num)
+            _log("current slot from chain-health (non-hex):", slot)
+            return slot
+
+        _log("chain-health did not contain a valid best_header.result.number:", hex_num)
+
+    except Exception as e:
+        _log("failed to derive slot from chain-health, falling back to time-based slot:", repr(e))
+
+    # Fallback: this keeps pipeline alive but is not PoBA-ideal
+    fallback_slot = int(_now())
+    _log("using fallback time-based slot:", fallback_slot)
+    return fallback_slot
+
+
 # ---- the public entrypoint you will call from your routes ----
 def try_auto_match() -> None:
     """
@@ -91,6 +132,7 @@ def try_auto_match() -> None:
     t = threading.Thread(target=_run_pipeline, daemon=True)
     t.start()
 
+
 def _run_pipeline() -> None:
     """
     The actual pipeline. Keep it robust and quiet: failures shouldn't crash the server.
@@ -109,11 +151,14 @@ def _run_pipeline() -> None:
             return
 
         # 2) Build proposal (forward distance caps if configured)
-        slot = int(_now())  # simple monotonic-ish slot id
+        slot = _get_current_slot()  # ← FIX: use chain-based slot instead of time.time()
         build_body: Dict[str, Any] = {"slot": slot, "requests": R, "offers": O}
-        if _CAP_START > 0: build_body["max_start_km"] = _CAP_START
-        if _CAP_END   > 0: build_body["max_end_km"]   = _CAP_END
-        if _CAP_TOTAL > 0: build_body["max_total_km"] = _CAP_TOTAL
+        if _CAP_START > 0:
+            build_body["max_start_km"] = _CAP_START
+        if _CAP_END > 0:
+            build_body["max_end_km"] = _CAP_END
+        if _CAP_TOTAL > 0:
+            build_body["max_total_km"] = _CAP_TOTAL
 
         build = _post_json(f"{AUTO_BASE}/poba/build-proposal", build_body)
 
