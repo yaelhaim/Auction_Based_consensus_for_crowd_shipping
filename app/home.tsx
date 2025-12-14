@@ -36,7 +36,7 @@ export default function HomeScreen() {
 
       {/* Centered content wrapper */}
       <View style={styles.centerWrap}>
-        <Text style={styles.title}>ברוכ/ה הבאה ל-BidDrop</Text>
+        <Text style={styles.title}>ברוכים הבאים ל-BidDrop</Text>
         <Text style={styles.subtitle}>
           כדי להמשיך נדרש זיהוי מאובטח באמצעות ארנק SubWallet.
         </Text>
@@ -65,7 +65,7 @@ export default function HomeScreen() {
           onPress={() => setHelpVisible(true)}
           style={{ marginTop: 18 }}
         >
-          <Text style={styles.helpText}>אין לך ארנק? צריך/ה עזרה בהתחברות</Text>
+          <Text style={styles.helpText}>אין לך ארנק? צריך עזרה בהתחברות</Text>
         </Pressable>
       </View>
 
@@ -80,8 +80,7 @@ export default function HomeScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>איך מתחברים עם SubWallet?</Text>
             <Text style={styles.modalBody}>
-              התקיני את SubWallet. במסך הבא נפתח את הארנק; אם לא — תוכלי לסרוק
-              QR.
+              התקן את SubWallet. במסך הבא נפתח את הארנק; אם לא — תוכל לסרוק QR.
             </Text>
 
             <View style={styles.linkList}>
@@ -97,7 +96,7 @@ export default function HomeScreen() {
               </Pressable>
               <Text style={styles.noteText}>
                 {Platform.OS === "web"
-                  ? "טיפ: אם התוסף לא מזוהה, רענני את הדף לאחר ההתקנה."
+                  ? "טיפ: אם התוסף לא מזוהה, רענן את הדף לאחר ההתקנה."
                   : "טיפ: במובייל נפתח את SubWallet; אם לא — סרקי QR."}
               </Text>
             </View>

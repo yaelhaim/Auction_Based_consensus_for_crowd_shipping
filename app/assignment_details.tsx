@@ -1,5 +1,4 @@
 // app/assignment_details.tsx
-// Driver-safe matching (no fake matches): prefer server data by assignment_id.
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -338,6 +337,11 @@ export default function AssignmentDetails() {
           : prev
       );
 
+      // Decide which role to forward to payment_details (driver → courier)
+      const r: Role = (role as Role) || "sender";
+      const paymentRole: "sender" | "rider" | "courier" =
+        r === "driver" ? "courier" : r;
+
       // Navigate to dedicated payment info screen
       router.replace({
         pathname: "/payment_details",
@@ -345,6 +349,7 @@ export default function AssignmentDetails() {
           token,
           assignmentId: assignment.assignment_id,
           escrowId: escrow.id,
+          role: paymentRole, // 👈 pass role so payment_details can route home correctly
         },
       });
     } catch (e: any) {

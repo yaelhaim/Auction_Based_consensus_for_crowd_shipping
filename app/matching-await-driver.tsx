@@ -1,7 +1,4 @@
 // app/matching-await-driver.tsx
-// Strict match gating: require a VALID assignment_id (UUID or positive int).
-// Read-only: NO local triggers. We rely only on authoritative status.
-// No navigation without a solid assignment id.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
@@ -173,7 +170,7 @@ export default function MatchingAwaitDriver() {
         {status === "searching" && (
           <>
             <Hourglass />
-            <Text style={S.title}>מחפשים לך משלוח מתאים…</Text>
+            <Text style={S.title}>מחפשים לך משימה מתאימה...</Text>
             <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>חזרה לדף הבית</Text>
@@ -193,7 +190,7 @@ export default function MatchingAwaitDriver() {
               onPress={openAssignment}
               disabled={!canOpen}
             >
-              <Text style={S.ctaText}>פתח/י את המשימה</Text>
+              <Text style={S.ctaText}>פתח את המשימה</Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>דף הבית</Text>
@@ -205,7 +202,7 @@ export default function MatchingAwaitDriver() {
           <>
             <Text style={S.bigEmoji}>⌚</Text>
             <Text style={S.title}>אין התאמה כרגע</Text>
-            <Text style={S.sub}>נשלח לך התראה כשיימצא משלוח מתאים.</Text>
+            <Text style={S.sub}>נשלח לך התראה כשתימצא משימה מתאימה.</Text>
             <TouchableOpacity style={S.cta} onPress={goHome}>
               <Text style={S.ctaText}>חזרה לדף הבית</Text>
             </TouchableOpacity>

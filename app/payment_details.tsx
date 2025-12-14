@@ -5,7 +5,7 @@
 //  - Opened after escrow creation from assignment_details.
 //  - Shows agreed price, basic assignment info, and payment status.
 //  - Explains that actual money is NOT charged yet (logical escrow only).
-//  - Single button to go back to home.
+//  - Single button to go back to home (now role-based).
 
 import React, { useEffect, useState } from "react";
 import {
@@ -32,15 +32,19 @@ const BROWN = "#AF947E";
 const CARD_BG = "rgba(255,255,255,0.94)";
 const CARD_BORDER = "rgba(0,0,0,0.06)";
 
+type RoleParam = "sender" | "rider" | "courier";
+
 type Params = {
   token?: string;
   assignmentId?: string;
   escrowId?: string;
+  role?: RoleParam;
 };
 
 export default function PaymentDetails() {
   const router = useRouter();
-  const { token, assignmentId, escrowId } = useLocalSearchParams<Params>();
+  const { token, assignmentId, escrowId, role } =
+    useLocalSearchParams<Params>();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,9 +79,30 @@ export default function PaymentDetails() {
   }, [assignmentId]);
 
   const handleDone = () => {
-    // Go back to main home page (kept as-is; can be changed to role-based redirect if needed)
+    // Decide which home screen to navigate to based on role
+    let homePath:
+      | "/sender_home_page"
+      | "/rider_home_page"
+      | "/courier_home_page"
+      | "/home_page";
+
+    switch (role) {
+      case "sender":
+        homePath = "/sender_home_page";
+        break;
+      case "rider":
+        homePath = "/rider_home_page";
+        break;
+      case "courier":
+        homePath = "/courier_home_page";
+        break;
+      default:
+        // Fallback: generic home if role is missing/unknown
+        homePath = "/home_page";
+    }
+
     router.replace({
-      pathname: "/home_page",
+      pathname: homePath,
       params: { token },
     });
   };
@@ -221,8 +246,8 @@ export default function PaymentDetails() {
             בבלוקצ&apos;יין שמייצג התחייבות לתשלום לנהג בסיום המשלוח.
           </Text>
           <Text style={S.body}>
-            לאחר שהמשלוח יסומן כמושלם ותאשר/י את המסירה, הפיקדון יסומן כתשלום
-            שיש להעביר לנהג (לפי המנגנון שנקבע מחוץ לאפליקציה).
+            לאחר שהמשלוח יסומן כמושלם ותאשר את המסירה, הפיקדון יסומן כתשלום שיש
+            להעביר לנהג (לפי המנגנון שנקבע מחוץ לאפליקציה).
           </Text>
         </View>
 

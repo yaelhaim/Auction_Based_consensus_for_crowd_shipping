@@ -1,6 +1,4 @@
 // app/sender_home_page.tsx
-// Sender Home — gradient, two-line headline, RTL, mocha translucent cards.
-// Hides Expo Router header.
 
 import React, { useEffect, useState, useCallback } from "react";
 import {

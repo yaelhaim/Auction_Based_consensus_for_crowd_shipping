@@ -1,5 +1,5 @@
 // app/wallet-login.tsx
-// Wallet-based login flow (SubWallet + WalletConnect) with RTL-first UI.
+// Wallet-based login flow (SubWallet + WalletConnect)
 // Change: after verify, if profile is completed -> navigate to /role_select
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -119,9 +119,8 @@ export default function WalletLogin() {
     setBusy("nonce");
     setErr(null);
     try {
-      const { nonce, message_to_sign, wallet_address } = await getNonce(
-        addressFromWallet
-      );
+      const { nonce, message_to_sign, wallet_address } =
+        await getNonce(addressFromWallet);
       setNonce(nonce);
       setMessageToSign(message_to_sign);
       setServerAddress(wallet_address || addressFromWallet);
@@ -306,7 +305,7 @@ export default function WalletLogin() {
             <>
               <Text style={styles.cardTitle}>התחברות עם SubWallet</Text>
               <Text style={styles.cardSub}>
-                התחבר/י לארנק כדי להמשיך. לאחר האישור ניצור עבורך נונס לחתימה.
+                התחבר לארנק כדי להמשיך. לאחר האישור ניצור עבורך נונס לחתימה.
               </Text>
 
               <TouchableOpacity
@@ -315,14 +314,14 @@ export default function WalletLogin() {
                 disabled={busy === "connecting"}
               >
                 <Text style={styles.btnPrimaryText}>
-                  {busy === "connecting" ? "מתחבר/ת…" : "התחבר/י עם SubWallet"}
+                  {busy === "connecting" ? "מתחבר..." : "התחבר עם SubWallet"}
                 </Text>
               </TouchableOpacity>
 
               {!!wcUri && (
                 <View style={{ alignItems: "center", marginTop: 14 }}>
                   <Text style={[styles.label, { textAlign: "center" }]}>
-                    סרקו את הקוד באפליקציית SubWallet כדי לאשר את ההתחברות.
+                    סרוק את הקוד באפליקציית SubWallet כדי לאשר את ההתחברות.
                   </Text>
                   <View style={styles.qrWrap}>
                     <QRCode value={wcUri} size={170} />
@@ -332,7 +331,7 @@ export default function WalletLogin() {
                     onPress={() => wcUri && openSubWalletOrStore(wcUri)}
                   >
                     <Text style={styles.btnOutlineText}>
-                      פתח/י את SubWallet עכשיו
+                      פתח את SubWallet עכשיו
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -342,7 +341,7 @@ export default function WalletLogin() {
             <>
               <View style={styles.statusRow}>
                 <View style={styles.badgeOk}>
-                  <Text style={styles.badgeOkText}>מחובר/ת ✓</Text>
+                  <Text style={styles.badgeOkText}>מחובר ✓</Text>
                 </View>
               </View>
 
@@ -359,8 +358,8 @@ export default function WalletLogin() {
                   {busy === "nonce"
                     ? "מכין Nonce"
                     : nonceReady
-                    ? "Nonce מוכן ✓"
-                    : "צור/י Nonce"}
+                      ? "Nonce מוכן ✓"
+                      : "צור Nonce"}
                 </Text>
               </TouchableOpacity>
 
@@ -373,7 +372,7 @@ export default function WalletLogin() {
                   {busy === "signing" || busy === "verifying" ? (
                     <ActivityIndicator />
                   ) : (
-                    <Text style={styles.btnPrimaryText}>חתמי ואשרי</Text>
+                    <Text style={styles.btnPrimaryText}>חתום ואשר</Text>
                   )}
                 </TouchableOpacity>
               )}

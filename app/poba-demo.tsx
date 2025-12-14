@@ -16,7 +16,7 @@ export default function PobaDemoScreen() {
 
   async function onCreate() {
     try {
-      const deadline = Math.floor(Date.now() / 1000) + 24 * 60 * 60; // +1 יום
+      const deadline = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
       const { id } = await createShipment({ detailsURI, deadline });
       setShipmentId(id);
       Alert.alert("Created", `Shipment #${id}`);

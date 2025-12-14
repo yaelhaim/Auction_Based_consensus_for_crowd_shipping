@@ -15,7 +15,6 @@ import BubblesBg from "./components/AnimatedBgBlobs";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// עדכני לנתיב האייקון השקוף שלך
 const appIcon = require("../assets/images/icon_without_background.png");
 
 const COLORS = {
@@ -36,9 +35,8 @@ export default function Index() {
 
   const topOffset = Math.max(28, Math.round(height * 0.12));
   const iconBoxHeight = Math.max(260, Math.round(height * 0.44));
-  const iconTopShift = Math.round(height * 0.02); // האייקון מעט למטה
+  const iconTopShift = Math.round(height * 0.02);
 
-  // ⬆️ מרימים את הכפתור מעלה (כ-14% מגובה המסך). אפשר לכוון 0.12–0.18
   const bottomLift = Math.max(40, Math.round(height * 0.14));
 
   return (
@@ -67,7 +65,6 @@ export default function Index() {
         />
       </View>
 
-      {/* כפתור מוצמד אבסולוטית ומורם מעלה */}
       <View style={[styles.bottomAbs, { bottom: bottomLift }]}>
         <TouchableOpacity style={styles.cta} onPress={start}>
           <Text style={styles.ctaText}>נתחיל</Text>

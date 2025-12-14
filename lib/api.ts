@@ -1,6 +1,5 @@
 // app/lib/api.ts
 // Unified API client for BidDrop (Expo).
-// Comments are in English (as requested). User-facing strings are in Hebrew.
 
 import Constants from "expo-constants";
 

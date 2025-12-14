@@ -1,6 +1,4 @@
 // app/courier_home_page.tsx
-// Courier Home — gradient, two-line headline, RTL, mocha translucent cards.
-// Hides Expo Router header.
 
 import React, { useEffect, useState, useCallback } from "react";
 import {

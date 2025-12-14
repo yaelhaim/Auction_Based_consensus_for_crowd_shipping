@@ -1,8 +1,5 @@
 // app/matching-await.tsx
-// Waiting screen (sender/rider) with city-map background + white card + hourglass.
-// Read-only: NO local triggers. We rely solely on the chain/Backend to finalize matches.
-// We only show "matched" and enable CTA if we have a solid assignment_id.
-// Comments are in English; user-facing strings are in Hebrew.
+// Waiting screen (sender/rider)
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
@@ -180,7 +177,7 @@ export default function MatchingAwait() {
         {status === "searching" && (
           <>
             <Hourglass />
-            <Text style={S.title}>שימי/שימו לב, מחפשים התאמה…</Text>
+            <Text style={S.title}>שים לב, מחפשים התאמה…</Text>
             <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>חזרה לדף הבית</Text>
@@ -200,7 +197,7 @@ export default function MatchingAwait() {
               onPress={openAssignment}
               disabled={ctaDisabled}
             >
-              <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
+              <Text style={S.ctaText}>פתח את ההתאמה</Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
               <Text style={S.linkText}>דף הבית</Text>
