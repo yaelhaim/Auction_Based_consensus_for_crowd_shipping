@@ -1,4 +1,6 @@
 // app/rider_home_page.tsx
+// Rider Home — gradient, two-line headline, RTL, mocha translucent cards.
+// Hides Expo Router header.
 
 import React, { useEffect, useState, useCallback } from "react";
 import {

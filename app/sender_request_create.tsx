@@ -1,5 +1,6 @@
 // Sender - Create Package Request
 // Visuals: mocha cards + CTA identical to home button
+// Comments in English, UI in Hebrew
 
 import React, { useState } from "react";
 import {
@@ -31,6 +32,7 @@ function fmt(dt?: Date | null) {
   return dayjs(dt).format("DD.MM.YYYY HH:mm");
 }
 
+// נסיון לחלץ מזהה בקשה ממבני תשובה שונים
 function pickRequestId(res: any): string | null {
   if (!res) return null;
   if (typeof res === "string") return res;
@@ -47,6 +49,7 @@ export default function SenderRequestCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
+  // מצב הטופס
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [startDT, setStartDT] = useState<Date | null>(null);
@@ -54,10 +57,12 @@ export default function SenderRequestCreate() {
   const [notes, setNotes] = useState("");
   const [maxPrice, setMaxPrice] = useState<string>("");
 
+  // פרטי איסוף
   const [pickupBy, setPickupBy] = useState<"me" | "other">("other");
   const [pickupName, setPickupName] = useState("");
   const [pickupPhone, setPickupPhone] = useState("");
 
+  // מודל תאריך/שעה
   const [dtModalOpen, setDtModalOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
@@ -90,7 +95,7 @@ export default function SenderRequestCreate() {
       return;
     }
     if (!מוכן) {
-      Alert.alert("שים לב", "מלא את כל השדות החיוניים לפני פרסום הבקשה");
+      Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום הבקשה");
       return;
     }
     try {
@@ -130,6 +135,7 @@ export default function SenderRequestCreate() {
     }
   }
 
+  // עיצוב רכיב בחירת תאריך
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -138,6 +144,7 @@ export default function SenderRequestCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
+  // מצב צעדים
   const שלב1 = !!(fromAddress.trim() && toAddress.trim());
   const שלב2 = !!(startDT && endDT);
   const שלב3 = Number(maxPrice) > 0;
@@ -155,6 +162,7 @@ export default function SenderRequestCreate() {
           subtitle="פרטי משלוח • זמנים וכתובות • תקציב ואישור"
         />
 
+        {/* סרגל צעדים */}
         <View style={S.stepbar}>
           {[
             { label: "פרטים", done: שלב1 },
@@ -181,6 +189,7 @@ export default function SenderRequestCreate() {
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
+          {/* כתובות */}
           <View style={S.card}>
             <Text style={S.cardTitle}>כתובות</Text>
             <View style={S.field}>
@@ -205,6 +214,7 @@ export default function SenderRequestCreate() {
             </View>
           </View>
 
+          {/* חלון זמן */}
           <View style={S.card}>
             <Text style={S.cardTitle}>חלון זמן</Text>
             <View style={S.row2}>
@@ -214,7 +224,7 @@ export default function SenderRequestCreate() {
               >
                 <Text style={S.pickerLabel}>התחלה *</Text>
                 <Text style={S.pickerValue}>
-                  {startDT ? fmt(startDT) : "בחר תאריך ושעה"}
+                  {startDT ? fmt(startDT) : "בחרי תאריך ושעה"}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -223,13 +233,14 @@ export default function SenderRequestCreate() {
               >
                 <Text style={S.pickerLabel}>סיום *</Text>
                 <Text style={S.pickerValue}>
-                  {endDT ? fmt(endDT) : "בחר תאריך ושעה"}
+                  {endDT ? fmt(endDT) : "בחרי תאריך ושעה"}
                 </Text>
               </TouchableOpacity>
             </View>
             <Text style={S.hint}>טיפ: חלון רחב מגדיל סיכוי לשיבוץ מהיר.</Text>
           </View>
 
+          {/* פרטים נוספים */}
           <View style={S.card}>
             <Text style={S.cardTitle}>פרטים נוספים</Text>
             <View style={S.field}>
@@ -245,6 +256,7 @@ export default function SenderRequestCreate() {
             </View>
           </View>
 
+          {/* מי אוסף */}
           <View style={S.card}>
             <Text style={S.cardTitle}>מי אוסף את החבילה?</Text>
             <View style={S.segment}>
@@ -270,7 +282,7 @@ export default function SenderRequestCreate() {
             {pickupBy === "other" ? (
               <>
                 <View style={S.field}>
-                  <Text style={S.label}>שם מוסר *</Text>
+                  <Text style={S.label}>שם מוסר/ת *</Text>
                   <TextInput
                     style={S.input}
                     placeholder="לדוגמה: דנה כהן"
@@ -280,7 +292,7 @@ export default function SenderRequestCreate() {
                   />
                 </View>
                 <View style={S.field}>
-                  <Text style={S.label}>נייד מוסר *</Text>
+                  <Text style={S.label}>נייד מוסר/ת *</Text>
                   <TextInput
                     style={S.input}
                     placeholder="050-1234567"
@@ -296,6 +308,7 @@ export default function SenderRequestCreate() {
             )}
           </View>
 
+          {/* תקציב */}
           <View style={S.card}>
             <Text style={S.cardTitle}>תקציב</Text>
             <View style={S.field}>
@@ -309,12 +322,13 @@ export default function SenderRequestCreate() {
                 textAlign="right"
               />
               <Text style={S.hint}>
-                זהו הסכום המקסימלי שאתה מוכן לשלם על המשלוח.
+                זהו הסכום המקסימלי שאת מוכנה לשלם על המשלוח.
               </Text>
             </View>
           </View>
         </ScrollView>
 
+        {/* כפתור תחתון */}
         <TouchableOpacity
           style={[S.bottomBar, !מוכן || submitting ? { opacity: 0.6 } : null]}
           activeOpacity={0.9}
@@ -328,6 +342,7 @@ export default function SenderRequestCreate() {
           )}
         </TouchableOpacity>
 
+        {/* מודל בחירת תאריך ושעה */}
         <Modal
           isVisible={dtModalOpen}
           onBackdropPress={() => setDtModalOpen(false)}
@@ -337,8 +352,8 @@ export default function SenderRequestCreate() {
           <View style={S.modalSheet}>
             <Text style={S.modalTitle}>
               {dtTarget === "start"
-                ? "בחר תאריך ושעה - התחלה"
-                : "בחר תאריך ושעה - סיום"}
+                ? "בחרי תאריך ושעה - התחלה"
+                : "בחרי תאריך ושעה - סיום"}
             </Text>
             <UIDatePicker
               mode="single"

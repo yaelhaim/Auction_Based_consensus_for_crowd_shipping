@@ -37,15 +37,18 @@ export default function RoleSelectScreen() {
   const { token } = useLocalSearchParams<{ token?: string }>();
   const [name, setName] = useState<string>("");
 
+  // למנוע רישום כפול אם המסך נטען שוב
   const didRegisterRef = useRef(false);
 
+  // רוחב כרטיס רספונסיבי
   const { width } = useWindowDimensions();
   const CARD_W = Math.min(width * 0.92, 480);
 
   useEffect(() => {
-    setName("");
+    setName(""); // אפשר בעתיד למשוך /me כדי להציג שם
   }, [token]);
 
+  // רישום טוקן לשרת אחרי התחברות (פעם אחת)
   useEffect(() => {
     (async () => {
       if (!token || didRegisterRef.current) return;
@@ -98,6 +101,7 @@ export default function RoleSelectScreen() {
     [router, token]
   );
 
+  // כפתור בדיקה שמציג דו"ח מלא ב-Alert (ללא תלות בלוגים)
   const runPushDebug = useCallback(async () => {
     try {
       const report = await getPushDebugReport();
@@ -113,7 +117,7 @@ export default function RoleSelectScreen() {
       <View style={styles.center}>
         <View style={[styles.card, { width: CARD_W }]}>
           <Text style={styles.title}>
-            {name ? `, ${name}` : ""} בתור מי תרצה להתקדם מכאן ?
+            {name ? `, ${name}` : ""} בתור מי תרצו להתקדם מכאן ?
           </Text>
           <Text style={styles.subtitle}>
             אפשר לשנות בכל רגע מהפרופיל. הבחירה תתאים את דף הבית והתפריטים.
@@ -121,26 +125,27 @@ export default function RoleSelectScreen() {
 
           <RoleItem
             emoji="📦"
-            title="שולח חבילה"
-            desc="צור משלוח חדש, עקוב אחרי משלוחים קיימים"
+            title="שולח/ת חבילה"
+            desc="צרו משלוח חדש, עקבו אחרי משלוחים קיימים"
             accent={COLORS.mocha}
             onPress={() => goNext("sender")}
           />
           <RoleItem
             emoji="🚗"
-            title="מחפש טרמפ"
-            desc="מצא טרמפ במסלולים קרובים והצטרף אליו"
+            title="מחפש/ת טרמפ"
+            desc="מצאו טרמפ במסלולים קרובים והצטרפו אליו"
             accent={COLORS.primary}
             onPress={() => goNext("rider")}
           />
           <RoleItem
             emoji="🛵"
-            title="שליח"
-            desc="קבל בקשות חדשות, מסלולים מומלצים"
+            title="שליח/ה"
+            desc="קבלו בקשות חדשות, מסלולים מומלצים"
             accent={COLORS.primaryDark}
             onPress={() => goNext("courier")}
           />
 
+          {/* כפתור בדיקת פוש – מציג דו״ח מלא */}
           <TouchableOpacity
             onPress={runPushDebug}
             style={{

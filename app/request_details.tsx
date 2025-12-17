@@ -20,7 +20,7 @@ import {
   getAssignmentById,
   getAssignmentByRequest,
   updateAssignmentStatus,
-  confirmAssignmentDelivered,
+  confirmAssignmentDelivered, // (no longer used but kept for now – safe to remove if you want)
   confirmEscrowDelivered,
   type AssignmentDetailOut,
   type AssignmentStatus,
@@ -526,11 +526,11 @@ export default function RequestDetailsScreen() {
               <Text style={S.statusBtnTxt}>
                 {confirmingDelivered
                   ? isSenderView
-                    ? "מאשר קבלה…"
-                    : "מאשר הגעה…"
+                    ? "מאשר/ת קבלה…"
+                    : "מאשר/ת הגעה…"
                   : isSenderView
-                    ? "מאשר שקיבלתי את החבילה"
-                    : "מאשר שהגעתי ליעד"}
+                    ? "מאשר/ת שקיבלתי את החבילה"
+                    : "מאשר/ת שהגעתי ליעד"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -550,7 +550,7 @@ export default function RequestDetailsScreen() {
             <View style={S.sheetContainer}>
               <Text style={S.sheetTitle}>בחירת סטטוס</Text>
               <Text style={S.sheetSubtitle}>
-                בחר את הסטטוס הבא למשימה לפי ההתקדמות בפועל
+                בחרי את הסטטוס הבא למשימה לפי ההתקדמות בפועל
               </Text>
 
               {nextOptions.map((st) => (

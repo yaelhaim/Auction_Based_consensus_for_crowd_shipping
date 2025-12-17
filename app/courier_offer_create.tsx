@@ -1,4 +1,5 @@
 // Courier - Create Availability Offer
+// Visuals: mocha cards + CTA identical to home button
 
 import React, { useState } from "react";
 import {
@@ -31,6 +32,7 @@ export default function CourierOfferCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
+  // טופס
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState<string>("");
   const [anyDestination, setAnyDestination] = useState(false);
@@ -44,6 +46,7 @@ export default function CourierOfferCreate() {
 
   const [submitting, setSubmitting] = useState(false);
 
+  // מודל תאריך/שעה
   const [dtOpen, setDtOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
@@ -79,7 +82,7 @@ export default function CourierOfferCreate() {
       return;
     }
     if (!מוכן) {
-      Alert.alert("שים לב", "מלא את כל השדות החיוניים לפני פרסום ההצעה");
+      Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום ההצעה");
       return;
     }
     try {
@@ -109,6 +112,7 @@ export default function CourierOfferCreate() {
     }
   }
 
+  // עיצוב רכיב בחירת תאריך
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -117,6 +121,7 @@ export default function CourierOfferCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
+  // צעדים
   const שלב1 = !!fromAddress && (anyDestination || !!toAddress);
   const שלב2 = !!(startDT && endDT);
   const שלב3 = Number(minPrice) > 0 && types.length > 0;
@@ -160,6 +165,7 @@ export default function CourierOfferCreate() {
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
+          {/* כתובות */}
           <View style={S.card}>
             <Text style={S.cardTitle}>כתובות</Text>
             <View style={S.field}>
@@ -212,6 +218,7 @@ export default function CourierOfferCreate() {
             )}
           </View>
 
+          {/* חלון זמן */}
           <View style={S.card}>
             <Text style={S.cardTitle}>חלון זמן</Text>
             <View style={S.row2}>
@@ -221,7 +228,7 @@ export default function CourierOfferCreate() {
               >
                 <Text style={S.pickerLabel}>התחלה *</Text>
                 <Text style={S.pickerValue}>
-                  {startDT ? fmt(startDT) : "בחר תאריך ושעה"}
+                  {startDT ? fmt(startDT) : "בחרו תאריך ושעה"}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -230,7 +237,7 @@ export default function CourierOfferCreate() {
               >
                 <Text style={S.pickerLabel}>סיום *</Text>
                 <Text style={S.pickerValue}>
-                  {endDT ? fmt(endDT) : "בחר תאריך ושעה"}
+                  {endDT ? fmt(endDT) : "בחרו תאריך ושעה"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -239,6 +246,7 @@ export default function CourierOfferCreate() {
             </Text>
           </View>
 
+          {/* סוגי משימות ומחיר */}
           <View style={S.card}>
             <Text style={S.cardTitle}>סוגי משימות ומחיר</Text>
 
@@ -294,6 +302,7 @@ export default function CourierOfferCreate() {
             </View>
           </View>
 
+          {/* הערות */}
           <View style={S.card}>
             <Text style={S.cardTitle}>הערות (אופציונלי)</Text>
             <View style={S.field}>
@@ -331,8 +340,8 @@ export default function CourierOfferCreate() {
           <View style={S.modalSheet}>
             <Text style={S.modalTitle}>
               {dtTarget === "start"
-                ? "בחר תאריך ושעה - התחלה"
-                : "בחר תאריך ושעה - סיום"}
+                ? "בחרו תאריך ושעה - התחלה"
+                : "בחרו תאריך ושעה - סיום"}
             </Text>
             <UIDatePicker
               mode="single"
