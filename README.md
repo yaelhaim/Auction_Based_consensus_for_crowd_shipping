@@ -5,6 +5,8 @@ BidDrop is a decentralized crowd-shipping and ride-sharing platform that enables
 
 The system connects senders, passengers, and drivers who are already planning intercity trips, and uses a blockchain-based auction mechanism to select the best assignment in a transparent and decentralized way.
 
+This project was developed as part of our **B.Sc. Software Engineering Final Project**
+
 ---
 
 # Project Overview
