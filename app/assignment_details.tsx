@@ -23,8 +23,8 @@ import {
   listRiderRequests,
   checkOfferMatchStatus,
   getAssignmentByRequest,
-  getAssignmentById, // ← prefer fetching by assignment id when available
-  initiateEscrow, // ← new: create escrow on pay click
+  getAssignmentById,
+  initiateEscrow,
   type RequestRow,
   type RiderRequestRow,
   type AssignmentDetailOut,
@@ -32,7 +32,7 @@ import {
 
 // ---- Theme & layout constants ----
 const GREEN = "#9BAC70";
-const BROWN = "#AF947E"; // softer taupe-brown accent
+const BROWN = "#AF947E";
 const BG = "#f7f7f5";
 const TXT = "#0b0b0b";
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
@@ -56,13 +56,12 @@ type RequestLite = {
 
 export default function AssignmentDetails() {
   const router = useRouter();
-  const { role, token, requestId, offerId, home, assignmentId } =
+  const { role, token, requestId, offerId, assignmentId } =
     useLocalSearchParams<{
       role: Role;
       token: string;
       requestId?: string;
       offerId?: string;
-      home?: string;
       assignmentId?: string;
     }>();
 
@@ -70,18 +69,17 @@ export default function AssignmentDetails() {
   const [error, setError] = useState<string | null>(null);
 
   const [resolvedRequestId, setResolvedRequestId] = useState<string | null>(
-    null
+    null,
   );
   const [assignmentIdLocal, setAssignmentIdLocal] = useState<string | null>(
-    null
-  ); // ✅ prefer this if present
+    null,
+  );
 
   const [assignment, setAssignment] = useState<AssignmentDetailOut | null>(
-    null
+    null,
   );
-  const [requestMeta, setRequestMeta] = useState<RequestLite | null>(null);
   const [isDriverMatched, setIsDriverMatched] = useState(false);
-  const [paying, setPaying] = useState(false); // ← payment in-flight flag
+  const [paying, setPaying] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -90,7 +88,6 @@ export default function AssignmentDetails() {
     setResolvedRequestId(null);
     setAssignmentIdLocal(null);
     setAssignment(null);
-    setRequestMeta(null);
     setIsDriverMatched(false);
     setError(null);
   }, [role, offerId, requestId]);
@@ -107,7 +104,7 @@ export default function AssignmentDetails() {
       abortRef.current = new AbortController();
 
       try {
-        if (!token) throw new Error("missing token");
+        if (!token) throw new Error("Missing token.");
         const r: Role = (role as Role) || "sender";
 
         if (r === "sender") {
@@ -123,7 +120,7 @@ export default function AssignmentDetails() {
               found = rows[0] ?? null;
               if (found) break;
             }
-            if (!found) throw new Error("לא נמצאה בקשה להצגה");
+            if (!found) throw new Error("No request found to display.");
             setResolvedRequestId(String(found.id));
           }
         } else if (r === "rider") {
@@ -139,24 +136,23 @@ export default function AssignmentDetails() {
               found = rows[0] ?? null;
               if (found) break;
             }
-            if (!found) throw new Error("לא נמצאה בקשה להצגה");
+            if (!found) throw new Error("No request found to display.");
             setResolvedRequestId(String(found.id));
           }
         } else {
           // DRIVER:
-          // If navigated with assignmentId (best), we are good.
           if (assignmentId) {
             setIsDriverMatched(true);
-            // requestId is optional; it will be confirmed from the server payload.
             if (requestId) setResolvedRequestId(String(requestId));
             setLoading(false);
             return;
           }
 
           if (!offerId)
-            throw new Error("אין הצעה פתוחה להצגת התאמה (offerId חסר)");
+            throw new Error(
+              "No open offer to display a match (offerId is missing).",
+            );
 
-          // Ask backend for THIS offer only (backend should verify by offer_id/created_at)
           let reqId = "";
           let asgId = "";
 
@@ -165,7 +161,7 @@ export default function AssignmentDetails() {
             try {
               const st = await checkOfferMatchStatus(
                 String(token),
-                String(offerId)
+                String(offerId),
               );
               if (st?.status === "matched") {
                 asgId = String(st.assignment_id || "");
@@ -176,14 +172,15 @@ export default function AssignmentDetails() {
             await new Promise((r) => setTimeout(r, 1000));
           }
 
-          if (!asgId && !reqId) throw new Error("עדיין אין התאמה להצעה הזו");
+          if (!asgId && !reqId)
+            throw new Error("There is still no match for this offer.");
 
           setIsDriverMatched(true);
-          if (asgId) setAssignmentIdLocal(asgId); // ✅ prefer fetching by assignment_id
+          if (asgId) setAssignmentIdLocal(asgId);
           if (reqId) setResolvedRequestId(reqId);
         }
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "שגיאה בטעינת הנתונים");
+        if (!cancelled) setError(e?.message || "Failed to load data.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -197,7 +194,6 @@ export default function AssignmentDetails() {
 
   /* -------- Fetch assignment (prefer by assignment_id) -------- */
   useEffect(() => {
-    // For driver we must have confirmed match first
     if ((role as Role) === "driver" && !isDriverMatched) return;
 
     const hasAssignmentId =
@@ -221,23 +217,18 @@ export default function AssignmentDetails() {
 
         const asgId = (assignmentIdLocal || assignmentId) as string | undefined;
         if (asgId) {
-          // ✅ Source of truth: fetch by assignment_id
           data = await getAssignmentById(String(asgId));
         } else {
-          // Fallback (sender/rider): fetch by request_id (only_active on server)
           data = await getAssignmentByRequest(String(resolvedRequestId));
         }
 
         if (cancelled) return;
 
-        // Keep requestId in sync (server is canonical)
         if (data.request_id && data.request_id !== resolvedRequestId) {
           setResolvedRequestId(data.request_id);
         }
 
         setAssignment(data);
-        const reqFromApi = (data as any).request as RequestLite | undefined;
-        if (reqFromApi?.id) setRequestMeta(reqFromApi);
         setLoading(false);
       } catch (e: any) {
         const msg = e?.message || "";
@@ -247,7 +238,7 @@ export default function AssignmentDetails() {
           msg.includes("404");
         if (!is404 || Date.now() - t0 > MAX_WAIT_MS) {
           if (!cancelled) {
-            setError(msg || "שגיאה בטעינת ההתאמה");
+            setError(msg || "Failed to load assignment.");
             setLoading(false);
           }
           return;
@@ -269,7 +260,6 @@ export default function AssignmentDetails() {
     isDriverMatched,
   ]);
 
-  // -------- Refresh on focus (prefer by assignment_id) --------
   useFocusEffect(
     useCallback(() => {
       const asgId = (assignmentIdLocal || assignmentId) as string | undefined;
@@ -287,8 +277,6 @@ export default function AssignmentDetails() {
             setResolvedRequestId(data.request_id);
           } else {
             setAssignment(data);
-            if ((data as any).request?.id)
-              setRequestMeta((data as any).request);
           }
         })
         .catch(() => {});
@@ -298,11 +286,10 @@ export default function AssignmentDetails() {
       resolvedRequestId,
       role,
       isDriverMatched,
-    ])
+    ]),
   );
 
   // ---- Payment helpers ----
-
   const isPayerRole = (role as Role) === "sender" || (role as Role) === "rider";
 
   const canInitiatePayment =
@@ -310,35 +297,30 @@ export default function AssignmentDetails() {
     isPayerRole &&
     !!assignment.payment_status &&
     ["pending_deposit", "failed", "refunded", "cancelled"].includes(
-      assignment.payment_status as string
+      assignment.payment_status as string,
     );
 
   const handlePay = async () => {
     if (!assignment) return;
     if (!token) {
-      Alert.alert("שגיאה", "נדרשת התחברות כדי לבצע תשלום.");
+      Alert.alert("Error", "You must be logged in to proceed with payment.");
       return;
     }
-    if (!canInitiatePayment || paying) {
-      return;
-    }
+    if (!canInitiatePayment || paying) return;
 
     try {
       setPaying(true);
-      // Call backend: create DB escrow + on-chain escrow entry
       const escrow = await initiateEscrow(
         String(token),
-        assignment.assignment_id
+        assignment.assignment_id,
       );
 
-      // Update local payment_status from escrow.status
       setAssignment((prev) =>
         prev
           ? ({ ...prev, payment_status: escrow.status } as AssignmentDetailOut)
-          : prev
+          : prev,
       );
 
-      // Navigate to dedicated payment info screen
       router.replace({
         pathname: "/payment_details",
         params: {
@@ -349,8 +331,9 @@ export default function AssignmentDetails() {
       });
     } catch (e: any) {
       const msg =
-        e?.message || "שגיאה ביצירת פיקדון התשלום. נסה/י שוב בעוד מספר דקות.";
-      Alert.alert("שגיאה", msg);
+        e?.message ||
+        "Failed to create the payment deposit. Please try again in a few minutes.";
+      Alert.alert("Error", msg);
     } finally {
       setPaying(false);
     }
@@ -361,7 +344,7 @@ export default function AssignmentDetails() {
     return (
       <View style={S.centerWrap}>
         <ActivityIndicator />
-        <Text style={S.sub}>טוען נתונים…</Text>
+        <Text style={S.sub}>Loading…</Text>
       </View>
     );
   }
@@ -377,14 +360,10 @@ export default function AssignmentDetails() {
   const d = assignment.driver;
   const req = (assignment as any).request as RequestLite | undefined;
 
-  // Treat both "ride" and legacy "passenger" as ride
   const t = ((req?.type as string) || "").toLowerCase();
   const isRide = t === "ride" || t === "passenger";
 
-  // Determine user role for text selection (default to "sender" for safety)
   const roleStr: Role = (role as Role) || "sender";
-
-  // Role-aware headline text for driver vs sender/rider
   const kind = getKindLabel(roleStr, isRide);
 
   const heroImage = isRide ? rideImg : pkgImg;
@@ -396,26 +375,27 @@ export default function AssignmentDetails() {
   const ratingNumber = typeof d.rating === "number" ? d.rating : null;
   const ratingLabel =
     ratingNumber == null
-      ? "חדש/ה"
+      ? "New"
       : d.rating != null
         ? d.rating.toFixed(1)
-        : "חדש/ה";
+        : "New";
 
-  // Lower hero image more for the car
   const heroOffset = isRide ? 56 : 16;
 
-  // Price label from agreed_price_cents (if exists)
   const priceCents =
     typeof assignment.agreed_price_cents === "number"
       ? assignment.agreed_price_cents
       : null;
   const priceLabel =
-    priceCents != null ? `${(priceCents / 100).toFixed(2)} ₪` : "—";
+    priceCents != null ? `₪ ${(priceCents / 100).toFixed(2)}` : "—";
   const paymentStatusLabel = prettyPaymentStatus(assignment.payment_status);
+
+  // ✅ IMPORTANT: your backend data appears swapped, so we flip for display.
+  const displayFrom = req?.to_address; // source (left)
+  const displayTo = req?.from_address; // destination (right)
 
   return (
     <View style={S.page}>
-      {/* fixed top layer */}
       <View style={S.header}>
         <GreenDiagonalWave />
         <View style={[S.heroWrap, { transform: [{ translateY: heroOffset }] }]}>
@@ -423,12 +403,11 @@ export default function AssignmentDetails() {
         </View>
       </View>
 
-      {/* single-screen content – no scroll */}
       <View style={S.details}>
         <Text style={S.kind}>{kind}</Text>
 
-        {/* Route pill – LTR: FROM (left) → arrow-forward → TO (right) */}
-        <RoutePillLTR from={req?.from_address} to={req?.to_address} />
+        {/* ✅ LTR route: SOURCE (left) -> DEST (right) */}
+        <RoutePillLTR from={displayFrom} to={displayTo} />
 
         <View style={S.driverRow}>
           <Image
@@ -439,7 +418,7 @@ export default function AssignmentDetails() {
           />
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={S.name} numberOfLines={1}>
-              {d.full_name || "נהג ללא שם"}
+              {d.full_name || "Unnamed driver"}
             </Text>
             <RatingStars rating={ratingNumber} label={ratingLabel} />
           </View>
@@ -458,7 +437,7 @@ export default function AssignmentDetails() {
 
         {!!req?.notes && (
           <View style={S.notesBox}>
-            <Text style={S.notesTitle}>הערות</Text>
+            <Text style={S.notesTitle}>Notes</Text>
             <Text style={S.notesBody} numberOfLines={3}>
               {req?.notes}
             </Text>
@@ -466,13 +445,13 @@ export default function AssignmentDetails() {
         )}
 
         <View style={S.infoRow}>
-          <InfoItem label="סטטוס" value={prettyStatus(assignment.status)} />
-          <InfoItem label="שעת שיוך" value={assignedLocal} />
+          <InfoItem label="Status" value={prettyStatus(assignment.status)} />
+          <InfoItem label="Assigned at" value={assignedLocal} />
         </View>
 
         <View style={S.infoRow}>
-          <InfoItem label="מחיר שסוכם" value={priceLabel} />
-          <InfoItem label="סטטוס תשלום" value={paymentStatusLabel} />
+          <InfoItem label="Agreed price" value={priceLabel} />
+          <InfoItem label="Payment status" value={paymentStatusLabel} />
         </View>
 
         {canInitiatePayment && (
@@ -481,12 +460,12 @@ export default function AssignmentDetails() {
             disabled={paying}
             style={[
               S.btn,
-              S.btnBrown, // ← brown like the phone icon button
+              S.btnBrown,
               { marginTop: 16, opacity: paying ? 0.6 : 1 },
             ]}
           >
             <Text style={S.btnText}>
-              {paying ? "מעדכן פיקדון…" : "להמשך תשלום"}
+              {paying ? "Updating deposit…" : "Continue to payment"}
             </Text>
           </TouchableOpacity>
         )}
@@ -497,26 +476,20 @@ export default function AssignmentDetails() {
 
 /* ---------------- helpers & small components ---------------- */
 
-// Role-aware headline text
 function getKindLabel(role: Role, isRide: boolean): string {
-  // Driver sees "you have a ride/package to do"
   if (role === "driver") {
     return isRide
-      ? "יש לך טרמפ לעשות, איזה כיף!"
-      : "יש לך חבילה לאסוף, איזה כיף!";
+      ? "You’ve got a ride to complete — nice!"
+      : "You’ve got a package to pick up — nice!";
   }
-
-  // Sender (package owner)
   if (role === "sender") {
     return isRide
-      ? "איזה כיף, מצאנו לך נהג!"
-      : "איזה כיף, מצאנו נהג שיקח את החבילה שלך!";
+      ? "Great news — we found you a driver!"
+      : "Great news — we found a driver for your package!";
   }
-
-  // Rider (passenger)
   return isRide
-    ? "איזה כיף, מצאנו לך נהג שיסיע אותך!"
-    : "איזה כיף, מצאנו לך נהג!";
+    ? "Great news — we found a driver to take you!"
+    : "Great news — we found you a driver!";
 }
 
 function prettyStatus(s: string) {
@@ -524,20 +497,20 @@ function prettyStatus(s: string) {
 }
 
 function prettyPaymentStatus(s?: string | null) {
-  if (!s) return "לא זמין";
+  if (!s) return "Not available";
   switch (s) {
     case "pending_deposit":
-      return "ממתין להפקדת תשלום";
+      return "Awaiting deposit";
     case "deposited":
-      return "תשלום הופקד";
+      return "Deposit received";
     case "released":
-      return "תשלום שוחרר";
+      return "Payment released";
     case "refunded":
-      return "תשלום הוחזר";
+      return "Refunded";
     case "failed":
-      return "תשלום נכשל";
+      return "Payment failed";
     case "cancelled":
-      return "תשלום בוטל";
+      return "Cancelled";
     default:
       return s.replaceAll("_", " ");
   }
@@ -582,7 +555,6 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ---- Route pill (LTR): FROM left → arrow-forward → TO right; no dots ---- */
 function RoutePillLTR({
   from,
   to,
@@ -593,17 +565,19 @@ function RoutePillLTR({
   if (!from && !to) return null;
   return (
     <View style={S.routePill}>
-      <View style={[S.routeRow, { flexDirection: "row" }]}>
-        <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
+      <View style={S.routeRow}>
+        <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
           {from || "—"}
         </Text>
+
         <Ionicons
           name="arrow-forward"
           size={18}
           color="#6b7280"
-          style={{ marginHorizontal: 10, transform: [{ scaleX: -1 }] }}
+          style={{ marginHorizontal: 10 }}
         />
-        <Text style={[S.routeText, { textAlign: "left" }]} numberOfLines={1}>
+
+        <Text style={[S.routeText, { textAlign: "right" }]} numberOfLines={1}>
           {to || "—"}
         </Text>
       </View>
@@ -611,7 +585,6 @@ function RoutePillLTR({
   );
 }
 
-/* -------- Curved diagonal wave (fixed at top) -------- */
 function GreenDiagonalWave() {
   const h = WAVE_H;
   const d = `
@@ -632,8 +605,6 @@ function GreenDiagonalWave() {
     </Svg>
   );
 }
-
-/* ---------------- Styles ---------------- */
 
 const S = StyleSheet.create({
   page: { flex: 1, backgroundColor: BG },
@@ -678,7 +649,14 @@ const S = StyleSheet.create({
   sub: { fontSize: 14, opacity: 0.7 },
   err: { color: "#b91c1c", fontWeight: "700" },
 
-  kind: { fontSize: 18, fontWeight: "800", color: TXT },
+  kind: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: TXT,
+    textAlign: "center",
+    lineHeight: 24,
+    paddingHorizontal: 6,
+  },
 
   routePill: {
     alignSelf: "center",
@@ -693,7 +671,11 @@ const S = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
-  routeRow: { alignItems: "center", justifyContent: "space-between" },
+  routeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   routeText: { color: TXT, fontWeight: "700", maxWidth: "44%" },
 
   driverRow: {

@@ -72,12 +72,12 @@ export default function ProfileSetup() {
       phone.trim() &&
       email.trim() &&
       city.trim(),
-    [firstName, lastName, phone, email, city]
+    [firstName, lastName, phone, email, city],
   );
 
   async function handleSave() {
     if (!ok) {
-      Alert.alert("שימי לב", "נא למלא את כל השדות.");
+      Alert.alert("Notice", "Please fill in all required fields.");
       return;
     }
     try {
@@ -96,7 +96,7 @@ export default function ProfileSetup() {
       router.replace({ pathname: "/home_page", params: { token } });
     } catch (e: any) {
       setBusy(false);
-      Alert.alert("שגיאה", e?.message || "שמירת הפרטים נכשלה");
+      Alert.alert("Error", e?.message || "Failed to save details.");
     }
   }
 
@@ -117,47 +117,47 @@ export default function ProfileSetup() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.card}>
-            <Text style={styles.title}>פרטים אישיים</Text>
+            <Text style={styles.title}>Personal Details</Text>
             <Text style={styles.subtitle}>
-              מלאי את פרטייך כדי להשלים את ההרשמה.
+              Please fill in your details to complete registration.
             </Text>
 
             <View style={styles.field}>
-              <Text style={styles.label}>שם פרטי</Text>
+              <Text style={styles.label}>First Name</Text>
               <TextInput
                 style={styles.input}
                 value={firstName}
                 onChangeText={setFirstName}
-                placeholder="לדוגמה: נועה"
-                textAlign="right"
+                placeholder="e.g., Noa"
+                textAlign="left"
               />
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>שם משפחה</Text>
+              <Text style={styles.label}>Last Name</Text>
               <TextInput
                 style={styles.input}
                 value={lastName}
                 onChangeText={setLastName}
-                placeholder="לדוגמה: כהן"
-                textAlign="right"
+                placeholder="e.g., Cohen"
+                textAlign="left"
               />
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>מספר פלאפון</Text>
+              <Text style={styles.label}>Phone Number</Text>
               <TextInput
                 style={styles.input}
                 value={phone}
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
                 placeholder="05x-xxxxxxx"
-                textAlign="right"
+                textAlign="left"
               />
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>אימייל</Text>
+              <Text style={styles.label}>Email</Text>
               <TextInput
                 style={styles.input}
                 value={email}
@@ -165,18 +165,18 @@ export default function ProfileSetup() {
                 keyboardType="email-address"
                 placeholder="name@example.com"
                 autoCapitalize="none"
-                textAlign="right"
+                textAlign="left"
               />
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>מקום מגורים</Text>
+              <Text style={styles.label}>City</Text>
               <TextInput
                 style={styles.input}
                 value={city}
                 onChangeText={setCity}
-                placeholder="עיר/יישוב"
-                textAlign="right"
+                placeholder="City / Town"
+                textAlign="left"
               />
             </View>
 
@@ -186,7 +186,7 @@ export default function ProfileSetup() {
               disabled={!ok || busy}
             >
               <Text style={styles.btnText}>
-                {busy ? "שומרת…" : "שמירה והמשך"}
+                {busy ? "Saving…" : "Save & Continue"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -219,14 +219,14 @@ const styles = StyleSheet.create({
     color: COLORS.dim,
     textAlign: "center",
     marginBottom: 16,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
   },
   field: { marginBottom: 12 },
   label: {
     fontSize: 13,
     color: COLORS.dim,
     marginBottom: 6,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
   },
   input: {
     borderWidth: 1,
@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     backgroundColor: "#fff",
-    writingDirection: "rtl",
+    writingDirection: "ltr",
   },
   btn: {
     backgroundColor: COLORS.primary,

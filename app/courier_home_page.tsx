@@ -1,5 +1,5 @@
 // app/courier_home_page.tsx
-// Courier Home — gradient, two-line headline, RTL, mocha translucent cards.
+// Courier Home — LTR, mocha translucent cards, gradient.
 // Hides Expo Router header.
 
 import React, { useEffect, useState, useCallback } from "react";
@@ -99,8 +99,9 @@ export default function CourierHome() {
         >
           <View style={S.userBar}>
             <Text style={S.userName} numberOfLines={1}>
-              {firstName ? `היי, ${firstName}` : "היי!"}
+              {firstName ? `Hi, ${firstName}` : "Hi!"}
             </Text>
+
             <TouchableOpacity
               style={S.switchBtn}
               onPress={() =>
@@ -109,72 +110,71 @@ export default function CourierHome() {
               activeOpacity={0.85}
             >
               <Ionicons name="swap-horizontal" size={16} color={TXT} />
-              <Text style={S.switchLabel}>החלפת תפקיד</Text>
+              <Text style={S.switchLabel}>Switch Role</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Two-line hero title */}
           <View style={S.titleWrap}>
-            <Text style={S.titleLine1}>הופכים כל נסיעה</Text>
+            <Text style={S.titleLine1}>Turn every trip into</Text>
             <Text style={S.titleLine2}>
-              להזדמנות משתלמת<Text style={S.spark}>✨</Text>
+              a great opportunity<Text style={S.spark}>✨</Text>
             </Text>
           </View>
 
+          {/* Status cards */}
           <View style={S.cardsRow}>
             <StatusCard
-              title="הושלמו"
-              subtitle="משימות שסיימת"
+              title="Completed"
+              subtitle="Deliveries you’ve completed"
               count={metrics?.delivered_count ?? 0}
               onPress={goDone}
               icon="checkmark-done"
             />
             <StatusCard
-              title="בטיפול"
-              subtitle="משימות פעילות"
+              title="In Progress"
+              subtitle="Active deliveries"
               count={metrics?.active_count ?? 0}
               onPress={goActive}
               icon="bicycle"
             />
             <StatusCard
-              title="זמינות"
-              subtitle="הצעות פעילות שלך"
+              title="Available"
+              subtitle="Your active availabilities"
               count={activeOffers}
               onPress={goAvailable}
               icon="notifications"
             />
           </View>
 
+          {/* Links */}
           <View style={S.linksCol}>
             <LinkBtn
-              label="כל הזמינויות שלך"
+              label="View all availabilities"
               onPress={goAvailable}
               icon="notifications"
             />
             <LinkBtn
-              label="כל המשימות שבביצוע"
+              label="View all active deliveries"
               onPress={goActive}
               icon="bicycle"
             />
             <LinkBtn
-              label="משימות שהושלמו"
+              label="View completed deliveries"
               onPress={goDone}
               icon="checkmark-done"
             />
           </View>
         </ScrollView>
 
+        {/* Bottom CTA */}
         <TouchableOpacity
           style={S.ctaBar}
           onPress={newAvailability}
           activeOpacity={0.9}
         >
-          <Text style={S.ctaText}>הוספת זמינות</Text>
-          <Ionicons
-            name="chevron-back"
-            size={18}
-            color="#fff"
-            style={{ transform: [{ rotate: "180deg" }] }}
-          />
+          <Text style={S.ctaText}>Add Availability</Text>
+          <Ionicons name="chevron-forward" size={18} color="#fff" />
         </TouchableOpacity>
       </LinearGradient>
     </View>
@@ -196,13 +196,15 @@ function StatusCard({
 }) {
   return (
     <TouchableOpacity style={S.card} onPress={onPress} activeOpacity={0.85}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <View style={S.cardHead}>
         <Ionicons name={icon} size={18} color={TXT} />
         <Text style={S.cardTitle}>{title}</Text>
       </View>
+
       <Text style={S.cardSub} numberOfLines={2}>
         {subtitle}
       </Text>
+
       <Text style={S.cardCount}>{count}</Text>
     </TouchableOpacity>
   );
@@ -219,20 +221,18 @@ function LinkBtn({
 }) {
   return (
     <TouchableOpacity style={S.linkBtn} onPress={onPress} activeOpacity={0.85}>
-      <Ionicons name={icon} size={16} color={TXT} />
-      <Text style={S.linkLabel}>{label}</Text>
-      <Ionicons
-        name="chevron-back"
-        size={16}
-        color={TXT}
-        style={{ transform: [{ rotate: "180deg" }] }}
-      />
+      <View style={S.linkLeft}>
+        <Ionicons name={icon} size={16} color={TXT} />
+        <Text style={S.linkLabel}>{label}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={TXT} />
     </TouchableOpacity>
   );
 }
 
 const S = StyleSheet.create({
   gradient: {
+    direction: "ltr",
     flex: 1,
     paddingTop: 24,
     paddingHorizontal: 16,
@@ -241,25 +241,35 @@ const S = StyleSheet.create({
   scroll: { paddingBottom: 96 },
 
   userBar: {
+    direction: "ltr",
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingTop: 12,
   },
-  userName: { color: TXT, fontSize: 16, fontWeight: "800", textAlign: "right" },
+  userName: {
+    color: TXT,
+    fontSize: 16,
+    fontWeight: "800",
+    textAlign: "left",
+  },
 
   titleWrap: {
+    direction: "ltr",
     marginTop: 10,
     alignItems: "flex-start",
     paddingHorizontal: 4,
-    marginBottom: 14,
+    marginBottom: 34,
   },
   titleLine1: {
-    fontSize: 30,
+    writingDirection: "ltr",
+    fontSize: 26,
     fontWeight: "900",
     color: TXT,
     textAlign: "left",
   },
   titleLine2: {
+    writingDirection: "ltr",
     fontSize: 26,
     fontWeight: "600",
     fontStyle: "italic",
@@ -282,6 +292,15 @@ const S = StyleSheet.create({
     padding: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: CARD_BORDER,
+    alignItems: "flex-start",
+  },
+  cardHead: {
+    direction: "ltr",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 8,
+    width: "100%",
   },
   cardTitle: { color: TXT, fontSize: 14, fontWeight: "800" },
   cardSub: {
@@ -290,10 +309,20 @@ const S = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     minHeight: 32,
+    textAlign: "left",
+    writingDirection: "ltr",
   },
-  cardCount: { color: TXT, fontSize: 28, fontWeight: "900", marginTop: 6 },
+  cardCount: {
+    color: TXT,
+    fontSize: 28,
+    fontWeight: "900",
+    marginTop: 6,
+    alignSelf: "flex-start",
+    textAlign: "left",
+  },
 
   switchBtn: {
+    direction: "ltr",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -302,14 +331,11 @@ const S = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.7)",
   },
-  switchLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: TXT,
-  },
+  switchLabel: { fontSize: 12, fontWeight: "700", color: TXT },
 
   linksCol: { marginTop: 16, gap: 10 },
   linkBtn: {
+    direction: "ltr",
     backgroundColor: CARD_BG,
     borderRadius: 14,
     paddingVertical: 12,
@@ -320,7 +346,19 @@ const S = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: CARD_BORDER,
   },
-  linkLabel: { color: TXT, fontSize: 14, fontWeight: "700" },
+  linkLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  linkLabel: {
+    color: TXT,
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
 
   ctaBar: {
     position: "absolute",

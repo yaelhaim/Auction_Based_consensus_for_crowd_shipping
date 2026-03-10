@@ -1,6 +1,6 @@
-// Sender - Create Package Request
+// Sender - Create Package Request (EN + LTR)
 // Visuals: mocha cards + CTA identical to home button
-// Comments in English, UI in Hebrew
+// Comments in English, UI in English
 
 import React, { useState } from "react";
 import {
@@ -19,20 +19,20 @@ import Modal from "react-native-modal";
 import UIDatePicker, { useDefaultStyles } from "react-native-ui-datepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import dayjs from "dayjs";
-import "dayjs/locale/he";
+import "dayjs/locale/en";
 
 import { Header } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 import { createSenderRequest, type CreateRequestInput } from "../lib/api";
 
-dayjs.locale("he");
+dayjs.locale("en");
 
 function fmt(dt?: Date | null) {
   if (!dt) return "";
   return dayjs(dt).format("DD.MM.YYYY HH:mm");
 }
 
-// נסיון לחלץ מזהה בקשה ממבני תשובה שונים
+// Try to extract request id from different response shapes
 function pickRequestId(res: any): string | null {
   if (!res) return null;
   if (typeof res === "string") return res;
@@ -49,7 +49,7 @@ export default function SenderRequestCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
-  // מצב הטופס
+  // Form state
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [startDT, setStartDT] = useState<Date | null>(null);
@@ -57,19 +57,19 @@ export default function SenderRequestCreate() {
   const [notes, setNotes] = useState("");
   const [maxPrice, setMaxPrice] = useState<string>("");
 
-  // פרטי איסוף
+  // Pickup contact
   const [pickupBy, setPickupBy] = useState<"me" | "other">("other");
   const [pickupName, setPickupName] = useState("");
   const [pickupPhone, setPickupPhone] = useState("");
 
-  // מודל תאריך/שעה
+  // Date/time modal
   const [dtModalOpen, setDtModalOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
 
   const [submitting, setSubmitting] = useState(false);
 
-  const מוכן =
+  const ready =
     fromAddress.trim().length > 0 &&
     toAddress.trim().length > 0 &&
     !!startDT &&
@@ -78,28 +78,34 @@ export default function SenderRequestCreate() {
     (pickupBy === "me" ||
       (pickupName.trim().length > 0 && pickupPhone.trim().length > 0));
 
-  function פתחתאריך(יעד: "start" | "end") {
-    setDtTarget(יעד);
-    setTempDT((יעד === "start" ? startDT : endDT) || new Date());
+  function openDate(target: "start" | "end") {
+    setDtTarget(target);
+    setTempDT((target === "start" ? startDT : endDT) || new Date());
     setDtModalOpen(true);
   }
-  function אשרתאריך() {
+
+  function confirmDate() {
     if (dtTarget === "start") setStartDT(new Date(tempDT));
     else setEndDT(new Date(tempDT));
     setDtModalOpen(false);
   }
 
-  async function שליחה() {
+  async function submit() {
     if (!token) {
-      Alert.alert("שגיאה", "אסימון התחברות חסר");
+      Alert.alert("Error", "Missing login token.");
       return;
     }
-    if (!מוכן) {
-      Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום הבקשה");
+    if (!ready) {
+      Alert.alert(
+        "Attention",
+        "Please fill in all required fields before publishing the request.",
+      );
       return;
     }
+
     try {
       setSubmitting(true);
+
       const payload: CreateRequestInput = {
         type: "package",
         from_address: fromAddress.trim(),
@@ -116,26 +122,28 @@ export default function SenderRequestCreate() {
 
       const res = await createSenderRequest(String(token), payload);
       const requestId = pickRequestId(res);
+
       if (!requestId) {
         Alert.alert(
-          "בקשה נשמרה",
-          "הבקשה נשמרה, אך לא קיבלנו מזהה להצגת מסך ההמתנה. חוזרים לדף הבית."
+          "Request saved",
+          "Your request was saved, but we couldn't fetch its ID to show the waiting screen. Returning to Home.",
         );
         router.replace({ pathname: "/sender_home_page", params: { token } });
         return;
       }
+
       router.replace({
         pathname: "/matching-await",
         params: { requestId, token, role: "sender" },
       });
     } catch (e: any) {
-      Alert.alert("שגיאה", e?.message || "יצירת הבקשה נכשלה");
+      Alert.alert("Error", e?.message || "Failed to create the request.");
     } finally {
       setSubmitting(false);
     }
   }
 
-  // עיצוב רכיב בחירת תאריך
+  // Date picker styling
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -144,10 +152,10 @@ export default function SenderRequestCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
-  // מצב צעדים
-  const שלב1 = !!(fromAddress.trim() && toAddress.trim());
-  const שלב2 = !!(startDT && endDT);
-  const שלב3 = Number(maxPrice) > 0;
+  // Step states
+  const step1 = !!(fromAddress.trim() && toAddress.trim());
+  const step2 = !!(startDT && endDT);
+  const step3 = Number(maxPrice) > 0;
 
   return (
     <LinearGradient
@@ -158,16 +166,16 @@ export default function SenderRequestCreate() {
     >
       <SafeAreaView style={S.safe}>
         <Header
-          title="בקשה חדשה"
-          subtitle="פרטי משלוח • זמנים וכתובות • תקציב ואישור"
+          title="New Request"
+          subtitle="Shipment details • Time window • Budget & confirmation"
         />
 
-        {/* סרגל צעדים */}
+        {/* Steps bar */}
         <View style={S.stepbar}>
           {[
-            { label: "פרטים", done: שלב1 },
-            { label: "זמנים", done: שלב2 },
-            { label: "אישור", done: שלב3 },
+            { label: "Details", done: step1 },
+            { label: "Time", done: step2 },
+            { label: "Confirm", done: step3 },
           ].map((s, i) => (
             <View style={S.stepItem} key={s.label}>
               <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
@@ -175,12 +183,14 @@ export default function SenderRequestCreate() {
                   {i + 1}
                 </Text>
               </View>
+
               <Text style={S.stepLabel}>{s.label}</Text>
+
               {i < 2 && (
                 <View
                   style={[
                     S.stepDivider,
-                    (i === 0 ? שלב1 : שלב2) && S.stepDividerDone,
+                    (i === 0 ? step1 : step2) && S.stepDividerDone,
                   ]}
                 />
               )}
@@ -189,76 +199,85 @@ export default function SenderRequestCreate() {
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
-          {/* כתובות */}
+          {/* Addresses */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>כתובות</Text>
+            <Text style={S.cardTitle}>Addresses</Text>
+
             <View style={S.field}>
-              <Text style={S.label}>כתובת איסוף *</Text>
+              <Text style={S.label}>Pickup address *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: בן גוריון 10, תל אביב"
+                placeholder="e.g., 10 Ben Gurion St, Tel Aviv"
                 value={fromAddress}
                 onChangeText={setFromAddress}
-                textAlign="right"
+                textAlign="left"
               />
             </View>
+
             <View style={S.field}>
-              <Text style={S.label}>כתובת יעד *</Text>
+              <Text style={S.label}>Destination address *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: הרצל 5, ראשון לציון"
+                placeholder="e.g., 5 Herzl St, Rishon LeZion"
                 value={toAddress}
                 onChangeText={setToAddress}
-                textAlign="right"
+                textAlign="left"
               />
             </View>
           </View>
 
-          {/* חלון זמן */}
+          {/* Time window */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>חלון זמן</Text>
+            <Text style={S.cardTitle}>Time window</Text>
+
             <View style={S.row2}>
               <TouchableOpacity
                 style={S.pickerBtn}
-                onPress={() => פתחתאריך("start")}
+                onPress={() => openDate("start")}
               >
-                <Text style={S.pickerLabel}>התחלה *</Text>
+                <Text style={S.pickerLabel}>Start *</Text>
                 <Text style={S.pickerValue}>
-                  {startDT ? fmt(startDT) : "בחרי תאריך ושעה"}
+                  {startDT ? fmt(startDT) : "Select date & time"}
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={S.pickerBtn}
-                onPress={() => פתחתאריך("end")}
+                onPress={() => openDate("end")}
               >
-                <Text style={S.pickerLabel}>סיום *</Text>
+                <Text style={S.pickerLabel}>End *</Text>
                 <Text style={S.pickerValue}>
-                  {endDT ? fmt(endDT) : "בחרי תאריך ושעה"}
+                  {endDT ? fmt(endDT) : "Select date & time"}
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={S.hint}>טיפ: חלון רחב מגדיל סיכוי לשיבוץ מהיר.</Text>
+
+            <Text style={S.hint}>
+              Tip: A wider time window increases the chance of a quick match.
+            </Text>
           </View>
 
-          {/* פרטים נוספים */}
+          {/* Extra details */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>פרטים נוספים</Text>
+            <Text style={S.cardTitle}>Additional details</Text>
+
             <View style={S.field}>
-              <Text style={S.label}>הערות (אופציונלי)</Text>
+              <Text style={S.label}>Notes (optional)</Text>
               <TextInput
                 style={[S.input, { height: 100, textAlignVertical: "top" }]}
-                placeholder="שביר / מסירה עד הדלת / הנחיות מיוחדות..."
+                placeholder="Fragile / leave at door / special instructions..."
                 multiline
                 value={notes}
                 onChangeText={setNotes}
-                textAlign="right"
+                textAlign="left"
               />
             </View>
           </View>
 
-          {/* מי אוסף */}
+          {/* Pickup contact */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>מי אוסף את החבילה?</Text>
+            <Text style={S.cardTitle}>Who will hand over the package?</Text>
+
             <View style={S.segment}>
               {(["me", "other"] as const).map((opt) => (
                 <TouchableOpacity
@@ -273,7 +292,7 @@ export default function SenderRequestCreate() {
                       pickupBy === opt && S.segmentTxtActive,
                     ]}
                   >
-                    {opt === "me" ? "אני" : "אדם אחר"}
+                    {opt === "me" ? "Me" : "Someone else"}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -282,67 +301,73 @@ export default function SenderRequestCreate() {
             {pickupBy === "other" ? (
               <>
                 <View style={S.field}>
-                  <Text style={S.label}>שם מוסר/ת *</Text>
+                  <Text style={S.label}>Contact name *</Text>
                   <TextInput
                     style={S.input}
-                    placeholder="לדוגמה: דנה כהן"
+                    placeholder="e.g., Dana Cohen"
                     value={pickupName}
                     onChangeText={setPickupName}
-                    textAlign="right"
+                    textAlign="left"
                   />
                 </View>
+
                 <View style={S.field}>
-                  <Text style={S.label}>נייד מוסר/ת *</Text>
+                  <Text style={S.label}>Contact phone *</Text>
                   <TextInput
                     style={S.input}
                     placeholder="050-1234567"
                     keyboardType="phone-pad"
                     value={pickupPhone}
                     onChangeText={setPickupPhone}
-                    textAlign="right"
+                    textAlign="left"
                   />
                 </View>
               </>
             ) : (
-              <Text style={S.hint}>נשתמש בשם והטלפון שלך כברירת מחדל.</Text>
+              <Text style={S.hint}>
+                We'll use your profile name and phone by default.
+              </Text>
             )}
           </View>
 
-          {/* תקציב */}
+          {/* Budget */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>תקציב</Text>
+            <Text style={S.cardTitle}>Budget</Text>
+
             <View style={S.field}>
-              <Text style={S.label}>תקציב מקסימלי (₪) *</Text>
+              <Text style={S.label}>Maximum budget (₪) *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: 75"
+                placeholder="e.g., 75"
                 keyboardType="numeric"
                 value={maxPrice}
                 onChangeText={setMaxPrice}
-                textAlign="right"
+                textAlign="left"
               />
+
               <Text style={S.hint}>
-                זהו הסכום המקסימלי שאת מוכנה לשלם על המשלוח.
+                This is the maximum amount you’re willing to pay for the
+                delivery.
               </Text>
             </View>
           </View>
         </ScrollView>
 
-        {/* כפתור תחתון */}
+        {/* Bottom CTA */}
         <TouchableOpacity
-          style={[S.bottomBar, !מוכן || submitting ? { opacity: 0.6 } : null]}
+          style={[S.bottomBar, !ready || submitting ? { opacity: 0.6 } : null]}
           activeOpacity={0.9}
-          onPress={שליחה}
-          disabled={!מוכן || submitting}
+          onPress={submit}
+          disabled={!ready || submitting}
         >
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={S.bottomBarText}>פרסום בקשה</Text>
+            <Text style={S.bottomBarText}>Publish Request</Text>
           )}
         </TouchableOpacity>
 
-        {/* מודל בחירת תאריך ושעה */}
+        {/* Date/Time modal */}
         <Modal
           isVisible={dtModalOpen}
           onBackdropPress={() => setDtModalOpen(false)}
@@ -352,31 +377,34 @@ export default function SenderRequestCreate() {
           <View style={S.modalSheet}>
             <Text style={S.modalTitle}>
               {dtTarget === "start"
-                ? "בחרי תאריך ושעה - התחלה"
-                : "בחרי תאריך ושעה - סיום"}
+                ? "Select date & time — Start"
+                : "Select date & time — End"}
             </Text>
+
             <UIDatePicker
               mode="single"
               date={tempDT}
               onChange={(p: any) => p?.date && setTempDT(p.date)}
               timePicker
-              locale="he"
+              locale="en"
               firstDayOfWeek={0}
               navigationPosition="around"
               styles={dpStyles}
             />
+
             <View style={S.modalRow}>
               <TouchableOpacity
                 style={[S.modalBtn, S.modalCancel]}
                 onPress={() => setDtModalOpen(false)}
               >
-                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
+                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[S.modalBtn, S.modalConfirm]}
-                onPress={אשרתאריך}
+                onPress={confirmDate}
               >
-                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
+                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>Confirm</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -389,7 +417,9 @@ export default function SenderRequestCreate() {
 const S = StyleSheet.create({
   safe: { flex: 1, paddingHorizontal: 16, paddingTop: 45 },
 
+  // --- Steps ---
   stepbar: {
+    direction: "ltr",
     flexDirection: "row",
     alignItems: "center",
     marginTop: 6,
@@ -419,6 +449,7 @@ const S = StyleSheet.create({
   },
   stepDividerDone: { backgroundColor: COLORS.primary },
 
+  // --- Cards ---
   card: {
     backgroundColor: COLORS.softMocha,
     borderRadius: 14,
@@ -430,16 +461,27 @@ const S = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+    direction: "ltr",
+    alignItems: "stretch",
   },
   cardTitle: {
     fontWeight: "900",
     color: COLORS.primaryDark,
     marginBottom: 8,
     textAlign: "left",
+    writingDirection: "ltr",
+    alignSelf: "flex-start",
   },
 
   field: { marginBottom: 10 },
-  label: { fontWeight: "800", color: COLORS.text, textAlign: "left" },
+  label: {
+    fontWeight: "800",
+    color: COLORS.text,
+    textAlign: "left",
+    writingDirection: "ltr",
+    direction: "ltr",
+    alignSelf: "flex-start",
+  },
   input: {
     marginTop: 6,
     backgroundColor: "#fff",
@@ -449,10 +491,18 @@ const S = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     color: COLORS.text,
+    textAlign: "left",
+    writingDirection: "ltr",
   },
-  hint: { marginTop: 6, color: COLORS.dim, textAlign: "left" },
+  hint: {
+    marginTop: 6,
+    color: COLORS.dim,
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
 
-  row2: { flexDirection: "row-reverse", gap: 10 },
+  // --- Time row (LTR) ---
+  row2: { flexDirection: "row", gap: 10 },
   pickerBtn: {
     flex: 1,
     backgroundColor: "#fff",
@@ -467,11 +517,13 @@ const S = StyleSheet.create({
     marginTop: 4,
     fontWeight: "900",
     color: COLORS.text,
-    textAlign: "right",
+    textAlign: "left",
+    writingDirection: "ltr",
   },
 
+  // --- Segment (LTR) ---
   segment: {
-    flexDirection: "row-reverse",
+    flexDirection: "row",
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
@@ -484,6 +536,7 @@ const S = StyleSheet.create({
   segmentTxt: { color: COLORS.primaryDark, fontWeight: "800" },
   segmentTxtActive: { color: "#fff" },
 
+  // --- Bottom CTA ---
   bottomBar: {
     position: "absolute",
     left: 16,
@@ -504,6 +557,7 @@ const S = StyleSheet.create({
   },
   bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
+  // --- Modal ---
   modalSheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
@@ -517,7 +571,7 @@ const S = StyleSheet.create({
     color: COLORS.primaryDark,
     marginBottom: 8,
   },
-  modalRow: { flexDirection: "row-reverse", gap: 12, marginTop: 8 },
+  modalRow: { flexDirection: "row", gap: 12, marginTop: 8 },
   modalBtn: {
     flex: 1,
     borderRadius: 12,

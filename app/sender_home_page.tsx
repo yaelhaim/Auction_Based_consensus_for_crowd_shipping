@@ -90,10 +90,9 @@ export default function SenderHome() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         >
-          {/* Top-right user name */}
           <View style={S.userBar}>
             <Text style={S.userName} numberOfLines={1}>
-              {firstName ? `היי, ${firstName}` : "היי!"}
+              {firstName ? `Hi, ${firstName}` : "Hi!"}
             </Text>
             <TouchableOpacity
               style={S.switchBtn}
@@ -103,37 +102,37 @@ export default function SenderHome() {
               activeOpacity={0.85}
             >
               <Ionicons name="swap-horizontal" size={16} color={TXT} />
-              <Text style={S.switchLabel}>החלפת תפקיד</Text>
+              <Text style={S.switchLabel}>Switch Role</Text>
             </TouchableOpacity>
           </View>
 
           {/* Two-line hero title */}
           <View style={S.titleWrap}>
-            <Text style={S.titleLine1}>הדרך הפשוטה לשלוח</Text>
+            <Text style={S.titleLine1}>The easiest way to send</Text>
             <Text style={S.titleLine2}>
-              חבילה לכל יעד<Text style={S.spark}>✨</Text>
+              a package anywhere<Text style={S.spark}>✨</Text>
             </Text>
           </View>
 
           {/* Status cards */}
           <View style={S.cardsRow}>
             <StatusCard
-              title="הושלמו"
-              subtitle="בקשות שסיימו מסירה"
+              title="Completed"
+              subtitle="Requests delivered"
               count={metrics?.delivered_count ?? 0}
               onPress={goDone}
               icon="checkmark-done"
             />
             <StatusCard
-              title="בטיפול"
-              subtitle="בקשות בתהליך"
+              title="In Progress"
+              subtitle="Requests currently in progress"
               count={metrics?.active_count ?? 0}
               onPress={goActive}
               icon="time"
             />
             <StatusCard
-              title="פתוחות"
-              subtitle="מחכות להתאמה"
+              title="Open"
+              subtitle="Waiting to be matched"
               count={metrics?.open_count ?? 0}
               onPress={goOpen}
               icon="folder-open"
@@ -143,13 +142,17 @@ export default function SenderHome() {
           {/* Links */}
           <View style={S.linksCol}>
             <LinkBtn
-              label="כל הבקשות הפתוחות"
+              label="View all open requests"
               onPress={goOpen}
               icon="folder-open"
             />
-            <LinkBtn label="כל הבקשות שבטיפול" onPress={goActive} icon="time" />
             <LinkBtn
-              label="בקשות שטופלו ונסגרו"
+              label="View all in-progress requests"
+              onPress={goActive}
+              icon="time"
+            />
+            <LinkBtn
+              label="View completed requests"
               onPress={goDone}
               icon="checkmark-done"
             />
@@ -162,13 +165,8 @@ export default function SenderHome() {
           onPress={newRequest}
           activeOpacity={0.9}
         >
-          <Text style={S.ctaText}>הוספת בקשה חדשה</Text>
-          <Ionicons
-            name="chevron-back"
-            size={18}
-            color="#fff"
-            style={{ transform: [{ rotate: "180deg" }] }}
-          />
+          <Text style={S.ctaText}>Create New Request</Text>
+          <Ionicons name="chevron-forward" size={18} color="#fff" />
         </TouchableOpacity>
       </LinearGradient>
     </View>
@@ -190,13 +188,15 @@ function StatusCard({
 }) {
   return (
     <TouchableOpacity style={S.card} onPress={onPress} activeOpacity={0.85}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <View style={S.cardHead}>
         <Ionicons name={icon} size={18} color={TXT} />
         <Text style={S.cardTitle}>{title}</Text>
       </View>
+
       <Text style={S.cardSub} numberOfLines={2}>
         {subtitle}
       </Text>
+
       <Text style={S.cardCount}>{count}</Text>
     </TouchableOpacity>
   );
@@ -213,20 +213,21 @@ function LinkBtn({
 }) {
   return (
     <TouchableOpacity style={S.linkBtn} onPress={onPress} activeOpacity={0.85}>
-      <Ionicons name={icon} size={16} color={TXT} />
-      <Text style={S.linkLabel}>{label}</Text>
-      <Ionicons
-        name="chevron-back"
-        size={16}
-        color={TXT}
-        style={{ transform: [{ rotate: "180deg" }] }}
-      />
+      {/* Left icon */}
+      <View style={S.linkLeft}>
+        <Ionicons name={icon} size={16} color={TXT} />
+        <Text style={S.linkLabel}>{label}</Text>
+      </View>
+
+      {/* Right chevron */}
+      <Ionicons name="chevron-forward" size={16} color={TXT} />
     </TouchableOpacity>
   );
 }
 
 const S = StyleSheet.create({
   gradient: {
+    direction: "ltr",
     flex: 1,
     paddingTop: 24,
     paddingHorizontal: 16,
@@ -235,25 +236,35 @@ const S = StyleSheet.create({
   scroll: { paddingBottom: 96 },
 
   userBar: {
+    direction: "ltr",
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingTop: 12,
   },
-  userName: { color: TXT, fontSize: 16, fontWeight: "800", textAlign: "right" },
+  userName: {
+    color: TXT,
+    fontSize: 16,
+    fontWeight: "800",
+    textAlign: "left",
+  },
 
   titleWrap: {
+    direction: "ltr",
     marginTop: 10,
     alignItems: "flex-start",
     paddingHorizontal: 4,
-    marginBottom: 14,
+    marginBottom: 34,
   },
   titleLine1: {
-    fontSize: 30,
+    writingDirection: "ltr",
+    fontSize: 26,
     fontWeight: "900",
     color: TXT,
     textAlign: "left",
   },
   titleLine2: {
+    writingDirection: "ltr",
     fontSize: 26,
     fontWeight: "600",
     fontStyle: "italic",
@@ -276,6 +287,15 @@ const S = StyleSheet.create({
     padding: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: CARD_BORDER,
+    alignItems: "flex-start",
+  },
+  cardHead: {
+    direction: "ltr",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 8,
+    width: "100%",
   },
   cardTitle: { color: TXT, fontSize: 14, fontWeight: "800" },
   cardSub: {
@@ -284,10 +304,20 @@ const S = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     minHeight: 32,
+    textAlign: "left",
+    writingDirection: "ltr",
   },
-  cardCount: { color: TXT, fontSize: 28, fontWeight: "900", marginTop: 6 },
+  cardCount: {
+    color: TXT,
+    fontSize: 28,
+    fontWeight: "900",
+    marginTop: 6,
+    alignSelf: "flex-start",
+    textAlign: "left",
+  },
 
   switchBtn: {
+    direction: "ltr",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -313,8 +343,21 @@ const S = StyleSheet.create({
     justifyContent: "space-between",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: CARD_BORDER,
+    direction: "ltr",
   },
-  linkLabel: { color: TXT, fontSize: 14, fontWeight: "700" },
+  linkLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  linkLabel: {
+    color: TXT,
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
 
   ctaBar: {
     position: "absolute",

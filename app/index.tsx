@@ -15,7 +15,6 @@ import BubblesBg from "./components/AnimatedBgBlobs";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// עדכני לנתיב האייקון השקוף שלך
 const appIcon = require("../assets/images/icon_without_background.png");
 
 const COLORS = {
@@ -46,10 +45,10 @@ export default function Index() {
       <BubblesBg />
 
       <View style={[styles.top, { marginTop: topOffset }]}>
-        <Text style={styles.h1}>טרמפים ומשלוחים — על הדרך</Text>
+        <Text style={styles.h1}>Rides & Deliveries{"\n"}On the Way</Text>
         <Text style={styles.lead}>
-          נהגים מרוויחים תוך כדי נסיעה, נוסעים מצטרפים בקלות, וחבילות מגיעות מהר
-          — במחיר הוגן ובשקיפות מלאה.
+          Drivers earn while driving, riders join effortlessly, and packages
+          arrive quickly
         </Text>
       </View>
 
@@ -70,7 +69,7 @@ export default function Index() {
       {/* כפתור מוצמד אבסולוטית ומורם מעלה */}
       <View style={[styles.bottomAbs, { bottom: bottomLift }]}>
         <TouchableOpacity style={styles.cta} onPress={start}>
-          <Text style={styles.ctaText}>נתחיל</Text>
+          <Text style={styles.ctaText}>Lets start</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -85,7 +84,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.text,
     textAlign: "center",
-    writingDirection: "rtl",
+    writingDirection: "ltr",
   },
   lead: {
     marginTop: 8,
@@ -93,7 +92,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     color: COLORS.dim,
     textAlign: "center",
-    writingDirection: "rtl",
+    writingDirection: "ltr",
     width: "92%",
     maxWidth: 560,
   },

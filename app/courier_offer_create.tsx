@@ -1,5 +1,7 @@
-// Courier - Create Availability Offer
+// app/courier_offer_create.tsx
+// Courier - Create Availability Offer (EN + LTR)
 // Visuals: mocha cards + CTA identical to home button
+// Comments in English, UI in English
 
 import React, { useState } from "react";
 import {
@@ -18,13 +20,13 @@ import Modal from "react-native-modal";
 import UIDatePicker, { useDefaultStyles } from "react-native-ui-datepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import dayjs from "dayjs";
-import "dayjs/locale/he";
+import "dayjs/locale/en";
 
 import { Header } from "./components/Primitives";
 import { COLORS } from "./ui/theme";
 import { createCourierOffer } from "../lib/api";
 
-dayjs.locale("he");
+dayjs.locale("en");
 
 const fmt = (d?: Date | null) => (d ? dayjs(d).format("DD.MM.YYYY HH:mm") : "");
 
@@ -32,7 +34,7 @@ export default function CourierOfferCreate() {
   const router = useRouter();
   const { token } = useLocalSearchParams<{ token?: string }>();
 
-  // טופס
+  // Form
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState<string>("");
   const [anyDestination, setAnyDestination] = useState(false);
@@ -46,12 +48,12 @@ export default function CourierOfferCreate() {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // מודל תאריך/שעה
+  // Date/time modal
   const [dtOpen, setDtOpen] = useState(false);
   const [dtTarget, setDtTarget] = useState<"start" | "end">("start");
   const [tempDT, setTempDT] = useState<Date>(new Date());
 
-  const מוכן =
+  const ready =
     !!fromAddress.trim() &&
     (!!anyDestination || !!toAddress.trim()) &&
     !!startDT &&
@@ -59,34 +61,40 @@ export default function CourierOfferCreate() {
     Number(minPrice) > 0 &&
     types.length > 0;
 
-  function החלףסוג(t: "package" | "passenger") {
+  function toggleType(t: "package" | "passenger") {
     setTypes((prev) =>
-      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
     );
   }
 
-  function פתחתאריך(יעד: "start" | "end") {
-    setDtTarget(יעד);
-    setTempDT((יעד === "start" ? startDT : endDT) || new Date());
+  function openDate(target: "start" | "end") {
+    setDtTarget(target);
+    setTempDT((target === "start" ? startDT : endDT) || new Date());
     setDtOpen(true);
   }
-  function אשרתאריך() {
+
+  function confirmDate() {
     if (dtTarget === "start") setStartDT(new Date(tempDT));
     else setEndDT(new Date(tempDT));
     setDtOpen(false);
   }
 
-  async function שליחה() {
+  async function submit() {
     if (!token) {
-      Alert.alert("שגיאה", "אסימון התחברות חסר");
+      Alert.alert("Error", "Missing login token.");
       return;
     }
-    if (!מוכן) {
-      Alert.alert("שימי לב", "מלאי את כל השדות החיוניים לפני פרסום ההצעה");
+    if (!ready) {
+      Alert.alert(
+        "Attention",
+        "Please fill in all required fields before publishing the offer.",
+      );
       return;
     }
+
     try {
       setSubmitting(true);
+
       const payload = {
         from_address: fromAddress.trim(),
         to_address: anyDestination ? null : toAddress.trim(),
@@ -96,23 +104,25 @@ export default function CourierOfferCreate() {
         types,
         notes: notes.trim() || undefined,
       };
+
       const { id: createdOfferId } = await createCourierOffer(
         String(token),
-        payload
+        payload,
       );
-      Alert.alert("בוצע", "הצעת השליח פורסמה בהצלחה");
+
+      Alert.alert("Success", "Your courier offer was published.");
       router.replace({
         pathname: "/matching-await-driver",
         params: { offerId: createdOfferId, token },
       });
     } catch (e: any) {
-      Alert.alert("שגיאה", e?.message || "יצירת הצעת שליח נכשלה");
+      Alert.alert("Error", e?.message || "Failed to create courier offer.");
     } finally {
       setSubmitting(false);
     }
   }
 
-  // עיצוב רכיב בחירת תאריך
+  // Date picker styling
   const dpBase = useDefaultStyles();
   const dpStyles = {
     ...dpBase,
@@ -121,10 +131,10 @@ export default function CourierOfferCreate() {
     today: { borderColor: COLORS.primary, borderWidth: 1, borderRadius: 8 },
   } as const;
 
-  // צעדים
-  const שלב1 = !!fromAddress && (anyDestination || !!toAddress);
-  const שלב2 = !!(startDT && endDT);
-  const שלב3 = Number(minPrice) > 0 && types.length > 0;
+  // Steps
+  const step1 = !!fromAddress.trim() && (anyDestination || !!toAddress.trim());
+  const step2 = !!(startDT && endDT);
+  const step3 = Number(minPrice) > 0 && types.length > 0;
 
   return (
     <LinearGradient
@@ -135,15 +145,16 @@ export default function CourierOfferCreate() {
     >
       <SafeAreaView style={S.safe}>
         <Header
-          title="הצעת שליח חדשה"
-          subtitle="אזור וזמן • סוגי משימות • מחיר מינימלי"
+          title="New Courier Offer"
+          subtitle="Area & time • Task types • Minimum price"
         />
 
+        {/* Steps bar */}
         <View style={S.stepbar}>
           {[
-            { label: "פרטים", done: שלב1 },
-            { label: "זמנים", done: שלב2 },
-            { label: "אישור", done: שלב3 },
+            { label: "Details", done: step1 },
+            { label: "Time", done: step2 },
+            { label: "Confirm", done: step3 },
           ].map((s, i) => (
             <View style={S.stepItem} key={s.label}>
               <View style={[S.stepCircle, s.done && S.stepCircleDone]}>
@@ -151,12 +162,14 @@ export default function CourierOfferCreate() {
                   {i + 1}
                 </Text>
               </View>
+
               <Text style={S.stepLabel}>{s.label}</Text>
+
               {i < 2 && (
                 <View
                   style={[
                     S.stepDivider,
-                    (i === 0 ? שלב1 : שלב2) && S.stepDividerDone,
+                    (i === 0 ? step1 : step2) && S.stepDividerDone,
                   ]}
                 />
               )}
@@ -164,173 +177,193 @@ export default function CourierOfferCreate() {
           ))}
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingBottom: 160 }}>
-          {/* כתובות */}
+        <ScrollView contentContainerStyle={{ paddingBottom: 180 }}>
+          {/* Addresses */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>כתובות</Text>
+            <Text style={S.cardTitle}>Addresses</Text>
+
             <View style={S.field}>
-              <Text style={S.label}>נקודת מוצא *</Text>
+              <Text style={S.label}>Starting point *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: דרך השלום 10, תל אביב"
+                placeholder="e.g., 10 HaShalom Rd, Tel Aviv"
                 value={fromAddress}
                 onChangeText={setFromAddress}
-                textAlign="right"
+                textAlign="left"
               />
             </View>
 
-            <View style={[S.row2, { marginBottom: 8 }]}>
+            {/* Destination mode (FIXED: proper segmented control) */}
+            <View style={S.segment}>
               <TouchableOpacity
                 style={[S.segmentBtn, anyDestination && S.segmentBtnActive]}
                 onPress={() => setAnyDestination(true)}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
                 <Text
                   style={[S.segmentTxt, anyDestination && S.segmentTxtActive]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
                 >
-                  פתוח לכל יעד
+                  Open to any destination
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[S.segmentBtn, !anyDestination && S.segmentBtnActive]}
                 onPress={() => setAnyDestination(false)}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
                 <Text
                   style={[S.segmentTxt, !anyDestination && S.segmentTxtActive]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
                 >
-                  יעד ספציפי
+                  Specific destination
                 </Text>
               </TouchableOpacity>
             </View>
 
             {!anyDestination && (
               <View style={S.field}>
-                <Text style={S.label}>יעד *</Text>
+                <Text style={S.label}>Destination *</Text>
                 <TextInput
                   style={S.input}
-                  placeholder="לדוגמה: חיפה, אזור הצפון"
+                  placeholder="e.g., Haifa (North area)"
                   value={toAddress}
                   onChangeText={setToAddress}
-                  textAlign="right"
+                  textAlign="left"
                 />
               </View>
             )}
           </View>
 
-          {/* חלון זמן */}
+          {/* Time window */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>חלון זמן</Text>
+            <Text style={S.cardTitle}>Time window</Text>
+
             <View style={S.row2}>
               <TouchableOpacity
                 style={S.pickerBtn}
-                onPress={() => פתחתאריך("start")}
+                onPress={() => openDate("start")}
               >
-                <Text style={S.pickerLabel}>התחלה *</Text>
+                <Text style={S.pickerLabel}>Start *</Text>
                 <Text style={S.pickerValue}>
-                  {startDT ? fmt(startDT) : "בחרו תאריך ושעה"}
+                  {startDT ? fmt(startDT) : "Select date & time"}
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={S.pickerBtn}
-                onPress={() => פתחתאריך("end")}
+                onPress={() => openDate("end")}
               >
-                <Text style={S.pickerLabel}>סיום *</Text>
+                <Text style={S.pickerLabel}>End *</Text>
                 <Text style={S.pickerValue}>
-                  {endDT ? fmt(endDT) : "בחרו תאריך ושעה"}
+                  {endDT ? fmt(endDT) : "Select date & time"}
                 </Text>
               </TouchableOpacity>
             </View>
+
             <Text style={S.hint}>
-              טיפ: חלון רחב מגדיל התאמות עם בקשות פתוחות.
+              Tip: A wider time window increases matching opportunities.
             </Text>
           </View>
 
-          {/* סוגי משימות ומחיר */}
+          {/* Task types & price */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>סוגי משימות ומחיר</Text>
+            <Text style={S.cardTitle}>Task types & price</Text>
 
-            <Text style={S.label}>אני מעוניין לבצע *</Text>
-            <View style={[S.row2, { marginTop: 8 }]}>
+            <Text style={S.label}>I’m available for *</Text>
+
+            <View style={[S.row2, { marginTop: 10 }]}>
               <TouchableOpacity
                 style={[
-                  S.segmentBtn,
-                  types.includes("package") && S.segmentBtnActive,
+                  S.pillBtn,
+                  types.includes("package") && S.pillBtnActive,
                 ]}
-                onPress={() => החלףסוג("package")}
-                activeOpacity={0.8}
+                onPress={() => toggleType("package")}
+                activeOpacity={0.85}
               >
                 <Text
                   style={[
-                    S.segmentTxt,
-                    types.includes("package") && S.segmentTxtActive,
+                    S.pillTxt,
+                    types.includes("package") && S.pillTxtActive,
                   ]}
+                  numberOfLines={1}
                 >
-                  חבילות
+                  Packages
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[
-                  S.segmentBtn,
-                  types.includes("passenger") && S.segmentBtnActive,
+                  S.pillBtn,
+                  types.includes("passenger") && S.pillBtnActive,
                 ]}
-                onPress={() => החלףסוג("passenger")}
-                activeOpacity={0.8}
+                onPress={() => toggleType("passenger")}
+                activeOpacity={0.85}
               >
                 <Text
                   style={[
-                    S.segmentTxt,
-                    types.includes("passenger") && S.segmentTxtActive,
+                    S.pillTxt,
+                    types.includes("passenger") && S.pillTxtActive,
                   ]}
+                  numberOfLines={1}
                 >
-                  טרמפיסטים
+                  Riders
                 </Text>
               </TouchableOpacity>
             </View>
 
-            <View style={[S.field, { marginTop: 10 }]}>
-              <Text style={S.label}>מחיר מינימלי (₪) *</Text>
+            <View style={[S.field, { marginTop: 12 }]}>
+              <Text style={S.label}>Minimum price (₪) *</Text>
               <TextInput
                 style={S.input}
-                placeholder="לדוגמה: 30"
+                placeholder="e.g., 30"
                 keyboardType="numeric"
                 value={minPrice}
                 onChangeText={setMinPrice}
-                textAlign="right"
+                textAlign="left"
               />
-              <Text style={S.hint}>זהו המחיר המינימלי לנסיעה/משלוח.</Text>
+              <Text style={S.hint}>
+                This is the minimum amount you’re willing to accept.
+              </Text>
             </View>
           </View>
 
-          {/* הערות */}
+          {/* Notes */}
           <View style={S.card}>
-            <Text style={S.cardTitle}>הערות (אופציונלי)</Text>
+            <Text style={S.cardTitle}>Notes (optional)</Text>
             <View style={S.field}>
               <TextInput
                 style={[S.input, { height: 100, textAlignVertical: "top" }]}
-                placeholder="פרטים רלוונטיים (ציוד, זמנים, העדפות...)"
+                placeholder="Relevant details (equipment, preferences, timing...)"
                 value={notes}
                 onChangeText={setNotes}
                 multiline
-                textAlign="right"
+                textAlign="left"
               />
             </View>
           </View>
         </ScrollView>
 
+        {/* Bottom CTA */}
         <TouchableOpacity
-          style={[S.bottomBar, !מוכן || submitting ? { opacity: 0.6 } : null]}
+          style={[S.bottomBar, !ready || submitting ? { opacity: 0.6 } : null]}
           activeOpacity={0.9}
-          onPress={שליחה}
-          disabled={!מוכן || submitting}
+          onPress={submit}
+          disabled={!ready || submitting}
         >
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={S.bottomBarText}>פרסום הצעת שליח</Text>
+            <Text style={S.bottomBarText}>Publish Offer</Text>
           )}
         </TouchableOpacity>
 
+        {/* Date/Time modal */}
         <Modal
           isVisible={dtOpen}
           onBackdropPress={() => setDtOpen(false)}
@@ -340,31 +373,34 @@ export default function CourierOfferCreate() {
           <View style={S.modalSheet}>
             <Text style={S.modalTitle}>
               {dtTarget === "start"
-                ? "בחרו תאריך ושעה - התחלה"
-                : "בחרו תאריך ושעה - סיום"}
+                ? "Select date & time — Start"
+                : "Select date & time — End"}
             </Text>
+
             <UIDatePicker
               mode="single"
               date={tempDT}
               onChange={(p: any) => p?.date && setTempDT(p.date)}
               timePicker
-              locale="he"
+              locale="en"
               firstDayOfWeek={0}
               navigationPosition="around"
               styles={dpStyles}
             />
+
             <View style={S.modalRow}>
               <TouchableOpacity
                 style={[S.modalBtn, S.modalCancel]}
                 onPress={() => setDtOpen(false)}
               >
-                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>ביטול</Text>
+                <Text style={[S.modalBtnTxt, S.modalCancelTxt]}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[S.modalBtn, S.modalConfirm]}
-                onPress={אשרתאריך}
+                onPress={confirmDate}
               >
-                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>אישור</Text>
+                <Text style={[S.modalBtnTxt, S.modalConfirmTxt]}>Confirm</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -377,7 +413,9 @@ export default function CourierOfferCreate() {
 const S = StyleSheet.create({
   safe: { flex: 1, paddingHorizontal: 16, paddingTop: 45 },
 
+  // --- Steps ---
   stepbar: {
+    direction: "ltr",
     flexDirection: "row",
     alignItems: "center",
     marginTop: 6,
@@ -407,6 +445,7 @@ const S = StyleSheet.create({
   },
   stepDividerDone: { backgroundColor: COLORS.primary },
 
+  // --- Cards ---
   card: {
     backgroundColor: COLORS.softMocha,
     borderRadius: 14,
@@ -418,16 +457,29 @@ const S = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+    direction: "ltr",
+    alignItems: "stretch",
   },
   cardTitle: {
     fontWeight: "900",
     color: COLORS.primaryDark,
     marginBottom: 8,
     textAlign: "left",
+    writingDirection: "ltr",
+    alignSelf: "flex-start",
   },
 
   field: { marginBottom: 10 },
-  label: { fontWeight: "800", color: COLORS.text, textAlign: "left" },
+
+  label: {
+    fontWeight: "800",
+    color: COLORS.text,
+    textAlign: "left",
+    writingDirection: "ltr",
+    direction: "ltr",
+    alignSelf: "flex-start",
+  },
+
   input: {
     marginTop: 6,
     backgroundColor: "#fff",
@@ -437,10 +489,21 @@ const S = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     color: COLORS.text,
+    textAlign: "left",
+    writingDirection: "ltr",
   },
-  hint: { marginTop: 6, color: COLORS.dim, textAlign: "left" },
 
-  row2: { flexDirection: "row-reverse", gap: 10 },
+  hint: {
+    marginTop: 6,
+    color: COLORS.dim,
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
+
+  // --- Row of 2 (LTR) ---
+  row2: { flexDirection: "row", gap: 10 },
+
+  // --- Time picker buttons ---
   pickerBtn: {
     flex: 1,
     backgroundColor: "#fff",
@@ -450,27 +513,72 @@ const S = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
   },
-  pickerLabel: { color: COLORS.dim, fontWeight: "700", textAlign: "left" },
+  pickerLabel: {
+    color: COLORS.dim,
+    fontWeight: "700",
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
   pickerValue: {
     marginTop: 4,
     fontWeight: "900",
     color: COLORS.text,
-    textAlign: "right",
+    textAlign: "left",
+    writingDirection: "ltr",
   },
 
-  segmentBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: "center",
+  // --- Destination segmented control (FIX) ---
+  segment: {
+    flexDirection: "row",
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(0,0,0,0.08)",
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  segmentBtn: {
+    flex: 1,
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   segmentBtnActive: { backgroundColor: COLORS.primary },
-  segmentTxt: { color: COLORS.primaryDark, fontWeight: "800" },
+  segmentTxt: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    textAlign: "center",
+    writingDirection: "ltr",
+  },
   segmentTxtActive: { color: "#fff" },
 
+  // --- Task types pills (clean, consistent) ---
+  pillBtn: {
+    flex: 1,
+    minHeight: 44,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,0,0,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  pillBtnActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  pillTxt: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    textAlign: "center",
+    writingDirection: "ltr",
+  },
+  pillTxtActive: { color: "#fff" },
+
+  // --- Bottom CTA ---
   bottomBar: {
     position: "absolute",
     left: 16,
@@ -491,6 +599,7 @@ const S = StyleSheet.create({
   },
   bottomBarText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
+  // --- Modal ---
   modalSheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
@@ -504,7 +613,7 @@ const S = StyleSheet.create({
     color: COLORS.primaryDark,
     marginBottom: 8,
   },
-  modalRow: { flexDirection: "row-reverse", gap: 12, marginTop: 8 },
+  modalRow: { flexDirection: "row", gap: 12, marginTop: 8 },
   modalBtn: {
     flex: 1,
     borderRadius: 12,

@@ -36,16 +36,16 @@ export default function HomeScreen() {
 
       {/* Centered content wrapper */}
       <View style={styles.centerWrap}>
-        <Text style={styles.title}>ברוכ/ה הבאה ל-BidDrop</Text>
+        <Text style={styles.title}>Welcome to BidDrop</Text>
         <Text style={styles.subtitle}>
-          כדי להמשיך נדרש זיהוי מאובטח באמצעות ארנק SubWallet.
+          To continue, secure identification via a SubWallet wallet is required.
         </Text>
 
         <TouchableOpacity
           style={[styles.buttonPrimary, { marginTop: 10 }]}
           onPress={() => router.push("/wallet-login")}
           accessibilityRole="button"
-          accessibilityLabel="התחברות או הרשמה עם SubWallet"
+          accessibilityLabel="Sign in or register with SubWallet"
           testID="btn-connect-subwallet"
         >
           <Text
@@ -56,7 +56,7 @@ export default function HomeScreen() {
             allowFontScaling // respect OS accessibility
             maxFontSizeMultiplier={1.2} // cap extreme system font sizes
           >
-            התחברות / הרשמה עם SubWallet
+            Sign in / Register with SubWallet
           </Text>
         </TouchableOpacity>
 
@@ -65,7 +65,9 @@ export default function HomeScreen() {
           onPress={() => setHelpVisible(true)}
           style={{ marginTop: 18 }}
         >
-          <Text style={styles.helpText}>אין לך ארנק? צריך/ה עזרה בהתחברות</Text>
+          <Text style={styles.helpText}>
+            Don’t have a wallet? Need help signing in?
+          </Text>
         </Pressable>
       </View>
 
@@ -78,27 +80,29 @@ export default function HomeScreen() {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>איך מתחברים עם SubWallet?</Text>
+            <Text style={styles.modalTitle}>
+              How do I connect with SubWallet?
+            </Text>
             <Text style={styles.modalBody}>
-              התקיני את SubWallet. במסך הבא נפתח את הארנק; אם לא — תוכלי לסרוק
-              QR.
+              Install SubWallet. On the next screen, we’ll open the wallet for
+              you; if not, you can scan a QR code.
             </Text>
 
             <View style={styles.linkList}>
               <Pressable
                 onPress={() => Linking.openURL("https://www.subwallet.app")}
               >
-                <Text style={styles.modalLink}>הורדת SubWallet</Text>
+                <Text style={styles.modalLink}>Download SubWallet</Text>
               </Pressable>
               <Pressable
                 onPress={() => Linking.openURL("https://support.subwallet.app")}
               >
-                <Text style={styles.modalLink}>מדריכים ותמיכה – SubWallet</Text>
+                <Text style={styles.modalLink}>Guides & Support SubWallet</Text>
               </Pressable>
               <Text style={styles.noteText}>
                 {Platform.OS === "web"
-                  ? "טיפ: אם התוסף לא מזוהה, רענני את הדף לאחר ההתקנה."
-                  : "טיפ: במובייל נפתח את SubWallet; אם לא — סרקי QR."}
+                  ? "Tip: If the extension isn't detected, refresh the page after installation."
+                  : "Tip: On mobile, we’ll open SubWallet; if it doesn’t open, scan the QR code."}
               </Text>
             </View>
 
@@ -106,7 +110,7 @@ export default function HomeScreen() {
               style={styles.buttonSecondary}
               onPress={() => setHelpVisible(false)}
             >
-              <Text style={styles.buttonSecondaryText}>סגירה</Text>
+              <Text style={styles.buttonSecondaryText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>

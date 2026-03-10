@@ -1,10 +1,12 @@
 // app/matching-await-driver.tsx
+// Waiting screen (driver/courier) — EN + LTR
 // Strict match gating: require a VALID assignment_id (UUID or positive int).
 // Read-only: NO local triggers. We rely only on authoritative status.
 // No navigation without a solid assignment id.
+// Comments in English, UI in English.
 
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { deferPushForOffer, checkOfferMatchStatus } from "../lib/api";
 import WaitBackground from "./components/WaitBackground";
@@ -12,7 +14,7 @@ import Hourglass from "./components/Hourglass";
 
 const POLL_MS = 1500;
 const DEFER_SECONDS = 120;
-const DEFAULT_WAIT_MS = 60000;
+const DEFAULT_WAIT_MS = 150000;
 const GRACE_MS = 30000;
 const cityMap = require("../assets/images/city_map_photo.jpg");
 
@@ -53,13 +55,15 @@ export default function MatchingAwaitDriver() {
   }>();
 
   const [status, setStatus] = useState<"searching" | "matched" | "timeout">(
-    "searching"
+    "searching",
   );
   const [requestId, setRequestId] = useState<string | null>(null);
   const [assignmentId, setAssignmentId] = useState<string | null>(null);
 
   const deadlineRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alertedRef = useRef(false);
+
   const homePath = home || "/courier_home_page";
 
   useEffect(() => {
@@ -77,7 +81,7 @@ export default function MatchingAwaitDriver() {
         const resp = await deferPushForOffer(
           String(token),
           String(offerId),
-          DEFER_SECONDS
+          DEFER_SECONDS,
         );
         const untilIso = (resp as any)?.push_defer_until;
         if (untilIso) {
@@ -87,7 +91,7 @@ export default function MatchingAwaitDriver() {
       } catch (e) {
         console.log(
           "[await-driver] deferPushForOffer error:",
-          (e as any)?.message || e
+          (e as any)?.message || e,
         );
       }
 
@@ -96,13 +100,13 @@ export default function MatchingAwaitDriver() {
         try {
           const raw = await checkOfferMatchStatus(
             String(token),
-            String(offerId)
+            String(offerId),
           );
           if (cancelled) return;
 
           console.log(
             "[await-driver] poll status payload:",
-            JSON.stringify(raw)
+            JSON.stringify(raw),
           );
 
           const st = (raw?.status ?? "").toString().toLowerCase().trim();
@@ -120,7 +124,7 @@ export default function MatchingAwaitDriver() {
         } catch (e) {
           console.log(
             "[await-driver] checkOfferMatchStatus error:",
-            (e as any)?.message || e
+            (e as any)?.message || e,
           );
         }
 
@@ -142,6 +146,16 @@ export default function MatchingAwaitDriver() {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [offerId, token]);
+
+  useEffect(() => {
+    if (status === "timeout" && !alertedRef.current) {
+      alertedRef.current = true;
+      Alert.alert(
+        "No match yet",
+        "We’ll notify you as soon as a suitable delivery task is found.",
+      );
+    }
+  }, [status]);
 
   function goHome() {
     router.replace({ pathname: homePath as any, params: { token } });
@@ -173,10 +187,10 @@ export default function MatchingAwaitDriver() {
         {status === "searching" && (
           <>
             <Hourglass />
-            <Text style={S.title}>מחפשים לך משלוח מתאים…</Text>
-            <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
+            <Text style={S.title}>Finding a task for you…</Text>
+            <Text style={S.sub}>This may take a few moments.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
-              <Text style={S.linkText}>חזרה לדף הבית</Text>
+              <Text style={S.linkText}>Back to Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -184,19 +198,21 @@ export default function MatchingAwaitDriver() {
         {status === "matched" && (
           <>
             <Text style={S.bigEmoji}>🎉</Text>
-            <Text style={S.title}>נמצאה משימה!</Text>
+            <Text style={S.title}>A task is available!</Text>
             <Text style={S.sub}>
-              {canOpen ? "אפשר להמשיך לפרטים." : "מעדכן מזהים מהשרת…"}
+              {canOpen ? "You can continue to the details." : "Syncing IDs…"}
             </Text>
+
             <TouchableOpacity
               style={[S.cta, !canOpen && { opacity: 0.5 }]}
               onPress={openAssignment}
               disabled={!canOpen}
             >
-              <Text style={S.ctaText}>פתח/י את המשימה</Text>
+              <Text style={S.ctaText}>Open task details</Text>
             </TouchableOpacity>
+
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
-              <Text style={S.linkText}>דף הבית</Text>
+              <Text style={S.linkText}>Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -204,10 +220,12 @@ export default function MatchingAwaitDriver() {
         {status === "timeout" && (
           <>
             <Text style={S.bigEmoji}>⌚</Text>
-            <Text style={S.title}>אין התאמה כרגע</Text>
-            <Text style={S.sub}>נשלח לך התראה כשיימצא משלוח מתאים.</Text>
+            <Text style={S.title}>No match right now</Text>
+            <Text style={S.sub}>
+              We’ll notify you as soon as a suitable task is found.
+            </Text>
             <TouchableOpacity style={S.cta} onPress={goHome}>
-              <Text style={S.ctaText}>חזרה לדף הבית</Text>
+              <Text style={S.ctaText}>Back to Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -233,14 +251,23 @@ const S = StyleSheet.create({
     gap: 10,
   },
   bigEmoji: { fontSize: 48, marginBottom: 4 },
+
   title: {
     fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
     color: "#1f2937",
     marginTop: 4,
+    writingDirection: "ltr",
   },
-  sub: { fontSize: 14, opacity: 0.7, textAlign: "center", color: "#334155" },
+  sub: {
+    fontSize: 14,
+    opacity: 0.7,
+    textAlign: "center",
+    color: "#334155",
+    writingDirection: "ltr",
+  },
+
   cta: {
     backgroundColor: "#9bac70",
     paddingVertical: 12,
@@ -248,7 +275,8 @@ const S = StyleSheet.create({
     borderRadius: 12,
     marginTop: 6,
   },
-  ctaText: { color: "#fff", fontWeight: "800" },
+  ctaText: { color: "#fff", fontWeight: "800", writingDirection: "ltr" },
+
   linkBtn: { padding: 10, marginTop: 8 },
-  linkText: { color: "#475569", fontWeight: "600" },
+  linkText: { color: "#475569", fontWeight: "600", writingDirection: "ltr" },
 });

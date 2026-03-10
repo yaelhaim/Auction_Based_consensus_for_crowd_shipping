@@ -8,6 +8,11 @@
 # New:
 # - Background listener that watches PoBA::LastFinalizedSlot and, when it
 #   advances, fetches FinalizedProposal(slot) and applies matches into the DB.
+#
+# Update (Barrier finalize):
+# - If POBA_ROLE=finalizer, the backend will finalize a slot as soon as it observes
+#   >= POBA_MIN_PROPOSALS successful submissions for that slot, or after a short timeout
+#   (POBA_FINALIZE_WAIT_MS). This gives "finalize immediately after both submit".
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Request, FastAPI
 from pydantic import BaseModel, Field, ConfigDict
@@ -16,7 +21,7 @@ from uuid import UUID
 import os, logging, math
 from datetime import timezone
 import time
-from threading import Thread
+from threading import Thread, Lock
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -96,9 +101,146 @@ def _finalization_timeout_sec() -> int:
 def _slot_poll_interval_sec() -> int:
     """
     How often the background listener polls LastFinalizedSlot (seconds).
-    Default is 6 (שקול ל־block time).
+    Default is 1 for faster DB apply after finalize.
     """
-    return int(os.getenv("POBA_SLOT_POLL_SEC", "6"))
+    return int(os.getenv("POBA_SLOT_POLL_SEC", "1"))
+
+
+def _poba_role() -> str:
+    return os.getenv("POBA_ROLE", "").strip().lower()
+
+
+def _poba_finalizer_proposer_id() -> Optional[str]:
+    """
+    Which proposer_id should be used for the FINALIZE extrinsic signing.
+    Typically 'alice' in your local setup.
+    """
+    v = os.getenv("POBA_PROPOSER_ID", "").strip()
+    return v or None
+
+
+def _min_proposals_required() -> int:
+    return int(os.getenv("POBA_MIN_PROPOSALS", "2"))
+
+
+def _finalize_wait_ms() -> int:
+    # Total time we wait for enough proposals within the same slot before finalizing anyway.
+    return int(os.getenv("POBA_FINALIZE_WAIT_MS", "1500"))
+
+
+def _finalize_poll_ms() -> int:
+    # How frequently the barrier loop checks proposal counts while waiting.
+    return int(os.getenv("POBA_FINALIZE_POLL_MS", "100"))
+
+
+# ------------------------------ Barrier-based finalize state ------------------------------
+
+_finalize_lock = Lock()
+_slot_submit_counts: dict[int, int] = {}
+_slot_first_seen_ts: dict[int, float] = {}
+_slot_finalize_started: set[int] = set()
+
+
+def _record_successful_submit(slot: int) -> int:
+    now = time.time()
+    with _finalize_lock:
+        if slot not in _slot_first_seen_ts:
+            _slot_first_seen_ts[slot] = now
+        _slot_submit_counts[slot] = int(_slot_submit_counts.get(slot, 0)) + 1
+        return int(_slot_submit_counts[slot])
+
+
+def _get_submit_count(slot: int) -> int:
+    with _finalize_lock:
+        return int(_slot_submit_counts.get(slot, 0))
+
+
+def _mark_finalize_started(slot: int) -> bool:
+    """
+    Return True if we successfully mark this slot as "finalize started".
+    If already started, return False (avoid spawning duplicate threads).
+    """
+    with _finalize_lock:
+        if slot in _slot_finalize_started:
+            return False
+        _slot_finalize_started.add(slot)
+        return True
+
+
+def _cleanup_slot_state(slot: int):
+    """
+    Best-effort cleanup to prevent unbounded growth in long runs.
+    """
+    with _finalize_lock:
+        _slot_submit_counts.pop(slot, None)
+        _slot_first_seen_ts.pop(slot, None)
+        _slot_finalize_started.discard(slot)
+
+
+def _maybe_finalize_slot_barrier(slot: int):
+    """
+    Barrier-based finalize:
+      - Only active when POBA_ROLE=finalizer
+      - Wait until we observe >= MIN_PROPOSALS submits for the slot, OR timeout
+      - Then call finalize_slot(slot) immediately
+
+    Notes:
+      - We still rely on chain guard inside _finalize_slot_impl (BestProposal exists with matches)
+      - DB apply is done by the background slot listener (LastFinalizedSlot polling)
+    """
+    if _poba_role() != "finalizer":
+        return
+
+    if not _mark_finalize_started(slot):
+        return
+
+    min_props = _min_proposals_required()
+    wait_ms = _finalize_wait_ms()
+    poll_ms = _finalize_poll_ms()
+    proposer_id = _poba_finalizer_proposer_id()
+
+    def _runner():
+        try:
+            t0 = time.time()
+            deadline = t0 + (wait_ms / 1000.0)
+
+            while time.time() < deadline:
+                cnt = _get_submit_count(slot)
+                if cnt >= min_props:
+                    break
+                time.sleep(max(0.01, poll_ms / 1000.0))
+
+            cnt = _get_submit_count(slot)
+            elapsed_ms = int((time.time() - t0) * 1000)
+            log.warning(
+                "barrier_finalize: slot=%s count=%s min=%s waited_ms=%s proposer_id=%s",
+                slot, cnt, min_props, elapsed_ms, proposer_id
+            )
+
+            # Avoid finalizing slots that are already finalized on-chain.
+            try:
+                sub = get_substrate()
+                last_fin = sub.query(_pallet_name(), "LastFinalizedSlot", []).value
+                if last_fin is not None and int(last_fin) >= int(slot):
+                    log.info(
+                        "barrier_finalize: slot=%s already finalized (LastFinalizedSlot=%s); skipping",
+                        slot, int(last_fin)
+                    )
+                    return
+            except Exception as e:
+                log.warning("barrier_finalize: failed to query LastFinalizedSlot: %s", e)
+
+            # Finalize now
+            try:
+                resp = _finalize_slot_impl(FinalizeBody(slot=int(slot)), proposer_id=proposer_id)
+                log.warning("barrier_finalize: finalize resp slot=%s -> %s", slot, resp)
+            except Exception as e:
+                log.warning("barrier_finalize: finalize failed slot=%s err=%s", slot, e)
+
+        finally:
+            _cleanup_slot_state(slot)
+
+    Thread(target=_runner, daemon=True).start()
 
 
 # ------------------------------ Types & utils ------------------------------
@@ -525,11 +667,6 @@ def _apply_matches_to_db(matches: List[MatchItem], db: Session) -> dict:
         )
         upd_o += 1
 
-        # NOTE:
-        # We deliberately DO NOT create any on-chain escrow here anymore.
-        # Escrow rows (DB + chain) are created later via /escrows/initiate,
-        # when the payer explicitly clicks the payment button in the app.
-
     db.commit()
     print(
         "[ESCROW DEBUG] done apply_matches, created assignments =",
@@ -603,6 +740,11 @@ def submit_proposal(body: SubmitProposalBody, request: Request):
       - /poba/submit-proposal?proposer_id=alice
       - /poba/submit-proposal?proposer_id=bob
     Used to pick a per-proposer signer on chain.
+
+    Barrier finalize:
+      - If POBA_ROLE=finalizer, after successful submit we record a count per slot.
+      - Once >= POBA_MIN_PROPOSALS are observed (or timeout POBA_FINALIZE_WAIT_MS),
+        we finalize the slot immediately (async).
     """
     proposer_id = request.query_params.get("proposer_id") or None
 
@@ -673,11 +815,12 @@ def submit_proposal(body: SubmitProposalBody, request: Request):
                 receipt = _submit_with_wait(substrate, extrinsic, label="submit_proposal")
                 ok = getattr(receipt, "is_success", None)
                 log.info(
-                    "submit_proposal included/finalized: ok=%s hash=%s tip=%s proposer_id=%s",
+                    "submit_proposal included/finalized: ok=%s hash=%s tip=%s proposer_id=%s slot=%s",
                     ok,
                     receipt.extrinsic_hash,
                     tip,
                     proposer_id,
+                    body.slot,
                 )
                 for ev in getattr(receipt, "triggered_events", []) or []:
                     try:
@@ -693,6 +836,11 @@ def submit_proposal(body: SubmitProposalBody, request: Request):
                         "hint": "Check pallet event / error data; ensure types and param names match runtime",
                         "receipt": str(getattr(receipt, "error_message", "")),
                     })
+
+                # Record successful submit for this slot and maybe trigger finalize (barrier)
+                cnt = _record_successful_submit(int(body.slot))
+                log.warning("barrier_finalize: observed submit slot=%s count_now=%s proposer_id=%s", body.slot, cnt, proposer_id)
+                _maybe_finalize_slot_barrier(int(body.slot))
 
                 return {"ok": True, "submitted": True, "hash": receipt.extrinsic_hash}
 
@@ -1016,8 +1164,6 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
                     continue
 
             # 1) Price feasibility
-            #    DB: requests.max_price (NUMERIC)   → r.max_price or r.max_price_cents
-            #        courier_offers.min_price      → o.min_price or o.min_price_cents
             req_max_raw = _get_attr(r, "max_price_cents", "max_price", default=0)
             off_min_raw = _get_attr(o, "min_price_cents", "min_price", default=0)
             req_max_cents = _to_cents(req_max_raw)
@@ -1060,7 +1206,6 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
                 if any(x is not None for x in (max_start_km, max_end_km, max_total_km)):
                     debug_counts["filtered_by_distance"] += 1
                     continue
-                # no caps → treat distance as 0
                 d_start = 0.0
                 d_end = 0.0
             else:
@@ -1079,11 +1224,7 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
                 debug_counts["filtered_by_distance"] += 1
                 continue
 
-            # 4) Agreed price policy:
-            #    If request has a max_price_cents > 0:
-            #       agreed_price = midpoint between min_price and max_price
-            #    Else:
-            #       agreed_price = offer.min_price
+            # 4) Agreed price policy
             if req_max_cents > 0:
                 agreed = (off_min_cents + req_max_cents) // 2
             else:
@@ -1092,8 +1233,8 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
             p_cents = max(1, int(agreed))
 
             # 5) Scoring
-            penalty = int(ALPHA * d_total + BETA * p_cents)  # minimize penalty
-            sc = max(0, BASE - penalty)                      # positive score (maximize on-chain)
+            penalty = int(ALPHA * d_total + BETA * p_cents)
+            sc = max(0, BASE - penalty)
 
             partial_score[i][j] = int(sc)
             price_agreed[i][j] = p_cents
@@ -1107,7 +1248,6 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
         return i == n
 
     def h(state: Tup[int, int, int]) -> float:
-        # Admissible lower bound: 0 (safe).
         return 0.0
 
     def expand(state: Tup[int, int, int]) -> _Iterable[Tup[Tup[int, int, int], float]]:
@@ -1115,11 +1255,7 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
         if i >= n:
             return []
         succ = []
-
-        # Penalized "skip request i"
         succ.append(((i + 1, used_mask, g + SKIP_COST), SKIP_COST))
-
-        # Try to match request i with any unused feasible offer j
         for j in range(m):
             if (used_mask >> j) & 1:
                 continue
@@ -1152,7 +1288,6 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
     while i < n:
         chosen_j: _Optional[int] = None
 
-        # Prefer a real match if possible (and still optimal)
         for j in range(m):
             if (used_mask >> j) & 1:
                 continue
@@ -1176,7 +1311,6 @@ def build_proposal(body: BuildBody, request: Request) -> BuildResp:
             i += 1
             continue
 
-        # Otherwise we must have skipped this request in the optimal path
         if acc + SKIP_COST <= best_cost:
             acc += SKIP_COST
             i += 1
@@ -1262,7 +1396,6 @@ def whoami():
     out["ss58_address"] = kp.ss58_address
     try:
         sub = get_substrate()
-        # System.Account → data.free
         acc = sub.query("System", "Account", [kp.ss58_address])
         free = int(acc.value["data"]["free"])
         out["free"] = free
@@ -1305,12 +1438,10 @@ def finalize_and_apply(
     This only touches the DB. On-chain escrows are created later via /escrows/initiate.
     The "normal" flow כעת אמור להיות דרך המאזין שמגיב ל־LastFinalizedSlot.
     """
-    # 1) finalize on chain (no specific proposer_id, use default signer)
     fin = _finalize_slot_impl(FinalizeBody(slot=payload.slot), proposer_id=None)
     if not fin or not fin.get("ok"):
         return {"ok": False, "where": "finalize", "resp": fin}
 
-    # 2) apply into DB
     db = SessionLocal()
     try:
         applied = _apply_matches_to_db(payload.matches or [], db)
@@ -1326,15 +1457,6 @@ def _load_matches_from_finalized(substrate: SubstrateInterface, slot: int) -> Li
     """
     Load FinalizedProposal(slot) from chain and convert to MatchItem list.
     Falls back to BestProposal(slot) if FinalizedProposal is None/empty.
-
-    Supports both:
-      - tuple-style: (req_u8[16], off_u8[16], price_cents, partial_score)
-      - dict-style:  {
-                       requestUuid / request_uuid: [u8;16] or "0x..",
-                       offerUuid   / offer_uuid:   [u8;16] or "0x..",
-                       agreedPriceCents / agreed_price_cents: int,
-                       partialScore      / partial_score:      int
-                     }
     """
     pallet = _pallet_name()
     fp = None
@@ -1345,7 +1467,6 @@ def _load_matches_from_finalized(substrate: SubstrateInterface, slot: int) -> Li
         fp = None
 
     if not fp:
-        # Fallback: try BestProposal (depends on how pallet is implemented)
         try:
             fp = substrate.query(pallet, "BestProposal", [int(slot)]).value
             log.info("slot_listener: using BestProposal(%s) as fallback", slot)
@@ -1364,41 +1485,24 @@ def _load_matches_from_finalized(substrate: SubstrateInterface, slot: int) -> Li
         """Normalize various forms (list[int], bytes, '0x..') into plain 32-hex."""
         if x is None:
             return ""
-        # Already hex string
         if isinstance(x, str):
             s = x.lower()
             if s.startswith("0x"):
                 s = s[2:]
             return s
-        # bytes / bytearray
         if isinstance(x, (bytes, bytearray)):
             return x.hex()
-        # list/tuple of ints
         try:
             return bytes(x).hex()
         except Exception:
-            # last resort
             return "".join(f"{int(b):02x}" for b in x)
 
     for it in items:
-        # ---- dict-style (what את רואה ב-Polkadot.js) ----
         if isinstance(it, dict):
-            rq_raw = (
-                it.get("requestUuid")
-                or it.get("request_uuid")
-            )
-            of_raw = (
-                it.get("offerUuid")
-                or it.get("offer_uuid")
-            )
-            price_raw = (
-                it.get("agreedPriceCents")
-                or it.get("agreed_price_cents")
-            )
-            score_raw = (
-                it.get("partialScore")
-                or it.get("partial_score")
-            )
+            rq_raw = it.get("requestUuid") or it.get("request_uuid")
+            of_raw = it.get("offerUuid") or it.get("offer_uuid")
+            price_raw = it.get("agreedPriceCents") or it.get("agreed_price_cents")
+            score_raw = it.get("partialScore") or it.get("partial_score")
 
             if rq_raw is None or of_raw is None:
                 log.warning("slot_listener: match item missing uuids: %r", it)
@@ -1408,9 +1512,7 @@ def _load_matches_from_finalized(substrate: SubstrateInterface, slot: int) -> Li
             of_hex = _to_hex_from_u8(of_raw)
             price_cents = int(price_raw) if price_raw is not None else 0
             partial = int(score_raw) if score_raw is not None else 0
-
         else:
-            # ---- tuple-style compatibility ----
             try:
                 rq_hex = _to_hex_from_u8(it[0])
                 of_hex = _to_hex_from_u8(it[1])
@@ -1436,7 +1538,6 @@ def _slot_listener_loop():
       - Connects to Substrate
       - Periodically polls PoBA::LastFinalizedSlot
       - When the value increases, loads *that slot only* and applies matches into DB.
-
     """
     poll_interval = _slot_poll_interval_sec()
     pallet = _pallet_name()
@@ -1454,14 +1555,12 @@ def _slot_listener_loop():
                 try:
                     val = substrate.query(pallet, "LastFinalizedSlot", []).value
                     if val is None:
-                        # No finalized slots yet
                         time.sleep(poll_interval)
                         continue
 
                     current_slot = int(val)
 
                     if last_seen_slot is None:
-                        # First run: just remember what the chain says now,
                         last_seen_slot = current_slot
                         log.info(
                             "slot_listener: initial LastFinalizedSlot=%s (no retro-apply)",
@@ -1510,13 +1609,6 @@ def install_poba_slot_listener(app: FastAPI):
     We *don't* rely on FastAPI startup events here, because the app uses a
     custom `lifespan` context in main.py. Instead, we start the daemon thread
     immediately the first time this function is called.
-
-    Usage in main.py:
-        from .routes_poba import router as poba_router, install_poba_slot_listener
-
-        app = FastAPI(lifespan=lifespan)
-        app.include_router(poba_router)
-        install_poba_slot_listener(app)
     """
     global _listener_started
     if _listener_started:

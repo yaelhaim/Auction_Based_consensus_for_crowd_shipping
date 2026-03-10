@@ -57,13 +57,13 @@ export default function RoleSelectScreen() {
         console.log(
           "[PUSH] Post-login: registering Expo token… (platform:",
           Platform.OS,
-          ")"
+          ")",
         );
         const synced = await registerAndSyncPushToken(BASE_URL, String(token));
         console.log("[PUSH] registerAndSyncPushToken →", synced ?? "(null)");
         if (!synced) {
           console.log(
-            "[PUSH] Registration returned null (no token or server error)."
+            "[PUSH] Registration returned null (no token or server error).",
           );
         }
       } catch (e) {
@@ -98,7 +98,7 @@ export default function RoleSelectScreen() {
         params: token ? { token: String(token) } : {},
       });
     },
-    [router, token]
+    [router, token],
   );
 
   // כפתור בדיקה שמציג דו"ח מלא ב-Alert (ללא תלות בלוגים)
@@ -117,30 +117,31 @@ export default function RoleSelectScreen() {
       <View style={styles.center}>
         <View style={[styles.card, { width: CARD_W }]}>
           <Text style={styles.title}>
-            {name ? `, ${name}` : ""} בתור מי תרצו להתקדם מכאן ?
+            {name ? `, ${name}` : ""} How would you like to continue?
           </Text>
           <Text style={styles.subtitle}>
-            אפשר לשנות בכל רגע מהפרופיל. הבחירה תתאים את דף הבית והתפריטים.
+            You can change this anytime from your profile. Your choice will
+            customize the home screen and menus.
           </Text>
 
           <RoleItem
             emoji="📦"
-            title="שולח/ת חבילה"
-            desc="צרו משלוח חדש, עקבו אחרי משלוחים קיימים"
+            title="Send a Package"
+            desc="Create a new delivery and track existing shipments"
             accent={COLORS.mocha}
             onPress={() => goNext("sender")}
           />
           <RoleItem
             emoji="🚗"
-            title="מחפש/ת טרמפ"
-            desc="מצאו טרמפ במסלולים קרובים והצטרפו אליו"
+            title="Find a Ride"
+            desc="Discover nearby rides and join a route that fits you"
             accent={COLORS.primary}
             onPress={() => goNext("rider")}
           />
           <RoleItem
             emoji="🛵"
-            title="שליח/ה"
-            desc="קבלו בקשות חדשות, מסלולים מומלצים"
+            title="Courier"
+            desc="Receive new requests and view recommended routes"
             accent={COLORS.primaryDark}
             onPress={() => goNext("courier")}
           />
@@ -158,7 +159,7 @@ export default function RoleSelectScreen() {
               borderColor: COLORS.border,
             }}
           >
-            <Text style={{ color: COLORS.text }}>בדיקת פוש (מציג דו״ח)</Text>
+            <Text style={{ color: COLORS.text }}>Push Test (Show Report)</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -166,19 +167,7 @@ export default function RoleSelectScreen() {
   );
 }
 
-function RoleItem({
-  emoji,
-  title,
-  desc,
-  accent,
-  onPress,
-}: {
-  emoji: string;
-  title: string;
-  desc: string;
-  accent: string;
-  onPress?: () => void;
-}) {
+function RoleItem({ emoji, title, desc, accent, onPress }: any) {
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -193,7 +182,9 @@ function RoleItem({
       >
         <Text style={{ fontSize: 22 }}>{emoji}</Text>
       </View>
-      <View style={{ flex: 1 }}>
+
+      {/* ✅ Text column */}
+      <View style={styles.roleTextCol}>
         <Text style={styles.roleTitle}>{title}</Text>
         <Text style={styles.roleDesc}>{desc}</Text>
       </View>
@@ -216,7 +207,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
-    shadowColor: "#000",
+    shadowColor: "#000000ff",
     shadowOpacity: 0.07,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
@@ -226,19 +217,20 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900",
     color: COLORS.text,
-    textAlign: "center",
-    writingDirection: "rtl",
+    textAlign: "left",
+    writingDirection: "ltr",
   },
   subtitle: {
     marginTop: 6,
     fontSize: 13,
     color: COLORS.dim,
-    textAlign: "center",
-    writingDirection: "rtl",
+    textAlign: "left",
+    writingDirection: "ltr",
     marginBottom: 10,
   },
   roleRow: {
-    flexDirection: "row-reverse",
+    direction: "ltr",
+    flexDirection: "row",
     alignItems: "center",
     gap: 12,
     borderWidth: 2,
@@ -254,16 +246,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1.5,
+    marginRight: 12,
+  },
+  roleTextCol: {
+    flex: 1,
+    alignItems: "flex-start",
   },
   roleTitle: {
     fontSize: 16,
     fontWeight: "800",
     color: COLORS.text,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
+    textAlign: "left",
   },
   roleDesc: {
     fontSize: 12,
     color: COLORS.dim,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
+    textAlign: "left",
   },
 });

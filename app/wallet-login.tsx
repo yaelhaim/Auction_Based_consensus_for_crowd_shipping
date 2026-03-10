@@ -119,9 +119,8 @@ export default function WalletLogin() {
     setBusy("nonce");
     setErr(null);
     try {
-      const { nonce, message_to_sign, wallet_address } = await getNonce(
-        addressFromWallet
-      );
+      const { nonce, message_to_sign, wallet_address } =
+        await getNonce(addressFromWallet);
       setNonce(nonce);
       setMessageToSign(message_to_sign);
       setServerAddress(wallet_address || addressFromWallet);
@@ -215,14 +214,14 @@ export default function WalletLogin() {
       const signPromise = wcSignMessage(
         session.topic,
         session.address,
-        messageToSign
+        messageToSign,
       );
 
       // Small nudges to bring the wallet to foreground in case it didn't pop
       const t1 = setTimeout(() => bringSubWalletToFront().catch(() => {}), 200);
       const t2 = setTimeout(
         () => bringSubWalletToFront().catch(() => {}),
-        3000
+        3000,
       );
 
       const signature = await signPromise;
@@ -292,21 +291,22 @@ export default function WalletLogin() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Steps (RTL) */}
+        {/* Steps (ltr) */}
         <View style={styles.stepsCard}>
-          <Text style={styles.stepsTitle}>צעדים</Text>
-          <Step label="התחברות לארנק" index={1} status={step1} />
-          <Step label="יצירת Nonce" index={2} status={step2} />
-          <Step label="חתימה ואימות" index={3} status={step3} />
+          <Text style={styles.stepsTitle}>Login Steps</Text>
+          <Step label="Wallet Connection" index={1} status={step1} />
+          <Step label="Nonce Generation" index={2} status={step2} />
+          <Step label="Signature & Verification" index={3} status={step3} />
         </View>
 
         {/* Main card */}
         <View className="card" style={styles.card}>
           {!session ? (
             <>
-              <Text style={styles.cardTitle}>התחברות עם SubWallet</Text>
+              <Text style={styles.cardTitle}>Sign in with SubWallet</Text>
               <Text style={styles.cardSub}>
-                התחבר/י לארנק כדי להמשיך. לאחר האישור ניצור עבורך נונס לחתימה.
+                Connect your wallet to continue. Once approved, we’ll generate a
+                nonce for you to sign.
               </Text>
 
               <TouchableOpacity
@@ -315,14 +315,17 @@ export default function WalletLogin() {
                 disabled={busy === "connecting"}
               >
                 <Text style={styles.btnPrimaryText}>
-                  {busy === "connecting" ? "מתחבר/ת…" : "התחבר/י עם SubWallet"}
+                  {busy === "connecting"
+                    ? "Connecting…"
+                    : "Connect with SubWallet"}
                 </Text>
               </TouchableOpacity>
 
               {!!wcUri && (
                 <View style={{ alignItems: "center", marginTop: 14 }}>
                   <Text style={[styles.label, { textAlign: "center" }]}>
-                    סרקו את הקוד באפליקציית SubWallet כדי לאשר את ההתחברות.
+                    Scan the QR code in the SubWallet app to approve the
+                    connection.
                   </Text>
                   <View style={styles.qrWrap}>
                     <QRCode value={wcUri} size={170} />
@@ -331,9 +334,7 @@ export default function WalletLogin() {
                     style={[styles.btnOutline, { marginTop: 10 }]}
                     onPress={() => wcUri && openSubWalletOrStore(wcUri)}
                   >
-                    <Text style={styles.btnOutlineText}>
-                      פתח/י את SubWallet עכשיו
-                    </Text>
+                    <Text style={styles.btnOutlineText}>Open SubWallet</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -342,7 +343,7 @@ export default function WalletLogin() {
             <>
               <View style={styles.statusRow}>
                 <View style={styles.badgeOk}>
-                  <Text style={styles.badgeOkText}>מחובר/ת ✓</Text>
+                  <Text style={styles.badgeOkText}>Connected ✓</Text>
                 </View>
               </View>
 
@@ -357,10 +358,10 @@ export default function WalletLogin() {
               >
                 <Text style={styles.btnPrimaryText}>
                   {busy === "nonce"
-                    ? "מכין Nonce"
+                    ? "Generating nonce…"
                     : nonceReady
-                    ? "Nonce מוכן ✓"
-                    : "צור/י Nonce"}
+                      ? "Nonce ready ✓"
+                      : "Generate nonce"}
                 </Text>
               </TouchableOpacity>
 
@@ -373,7 +374,7 @@ export default function WalletLogin() {
                   {busy === "signing" || busy === "verifying" ? (
                     <ActivityIndicator />
                   ) : (
-                    <Text style={styles.btnPrimaryText}>חתמי ואשרי</Text>
+                    <Text style={styles.btnPrimaryText}>Sign & Verify</Text>
                   )}
                 </TouchableOpacity>
               )}
@@ -446,7 +447,7 @@ function Step({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 16, paddingBottom: 28, alignItems: "center" },
+  content: { padding: 16, paddingBottom: 28, alignItems: "flex-start" },
 
   stepsCard: {
     width: "100%",
@@ -463,15 +464,16 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
     marginBottom: 8,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
     textAlign: "left",
   },
   stepRow: {
-    flexDirection: "row",
-    justifyContent: "flex-start",
+    flexDirection: "row-reverse",
     alignItems: "center",
+    justifyContent: "flex-start",
     marginBottom: 8,
   },
+
   stepDot: {
     width: 26,
     height: 26,
@@ -479,10 +481,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: 0,
+    marginLeft: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
+
   stepDotCurrent: {
     backgroundColor: "#eef6ea",
     borderColor: COLORS.primary,
@@ -498,7 +502,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 14,
     writingDirection: "ltr",
-    textAlign: "right",
+    textAlign: "left",
     flexShrink: 1,
   },
 
@@ -516,18 +520,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
     color: COLORS.text,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
     textAlign: "center",
   },
   cardSub: {
     fontSize: 13,
     color: COLORS.dim,
     marginTop: 4,
-    writingDirection: "rtl",
+    writingDirection: "ltr",
     textAlign: "center",
   },
 
-  label: { fontSize: 12, color: COLORS.dim, writingDirection: "rtl" },
+  label: { fontSize: 12, color: COLORS.dim, writingDirection: "ltr" },
   qrWrap: {
     padding: 10,
     backgroundColor: "#fff",

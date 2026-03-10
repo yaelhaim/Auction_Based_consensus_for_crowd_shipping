@@ -1,8 +1,8 @@
 // app/matching-await.tsx
-// Waiting screen (sender/rider) with city-map background + white card + hourglass.
+// Waiting screen (sender/rider) — EN + LTR
 // Read-only: NO local triggers. We rely solely on the chain/Backend to finalize matches.
 // We only show "matched" and enable CTA if we have a solid assignment_id.
-// Comments are in English; user-facing strings are in Hebrew.
+// Comments in English, UI in English.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
@@ -13,7 +13,7 @@ import Hourglass from "./components/Hourglass";
 
 const POLL_MS = 1500;
 const DEFER_SECONDS = 120;
-const DEFAULT_WAIT_MS = 60000;
+const DEFAULT_WAIT_MS = 150000;
 const GRACE_MS = 30000;
 const cityMap = require("../assets/images/city_map_photo.jpg");
 
@@ -54,7 +54,7 @@ export default function MatchingAwait() {
   }>();
 
   const [status, setStatus] = useState<"searching" | "matched" | "timeout">(
-    "searching"
+    "searching",
   );
   const [assignmentId, setAssignmentId] = useState<string | null>(null);
 
@@ -85,7 +85,7 @@ export default function MatchingAwait() {
         const resp = await deferPushForRequest(
           String(token),
           String(requestId),
-          DEFER_SECONDS
+          DEFER_SECONDS,
         );
         const untilIso = (resp as any)?.push_defer_until;
         if (untilIso) {
@@ -95,7 +95,7 @@ export default function MatchingAwait() {
       } catch (e) {
         console.log(
           "[await] deferPushForRequest error:",
-          (e as any)?.message || e
+          (e as any)?.message || e,
         );
       }
 
@@ -119,7 +119,7 @@ export default function MatchingAwait() {
         } catch (e) {
           console.log(
             "[await] checkMatchStatus error:",
-            (e as any)?.message || e
+            (e as any)?.message || e,
           );
         }
 
@@ -145,7 +145,10 @@ export default function MatchingAwait() {
   useEffect(() => {
     if (status === "timeout" && !alertedRef.current) {
       alertedRef.current = true;
-      Alert.alert("אין התאמה כרגע", "נשלח לך התראה כשיימצא נהג/שליח מתאים.");
+      Alert.alert(
+        "No match yet",
+        "We’ll notify you as soon as a suitable courier/driver is found.",
+      );
     }
   }, [status]);
 
@@ -180,10 +183,10 @@ export default function MatchingAwait() {
         {status === "searching" && (
           <>
             <Hourglass />
-            <Text style={S.title}>שימי/שימו לב, מחפשים התאמה…</Text>
-            <Text style={S.sub}>זה עשוי לקחת מספר רגעים.</Text>
+            <Text style={S.title}>Searching for a match…</Text>
+            <Text style={S.sub}>This may take a few moments.</Text>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
-              <Text style={S.linkText}>חזרה לדף הבית</Text>
+              <Text style={S.linkText}>Back to Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -191,19 +194,21 @@ export default function MatchingAwait() {
         {status === "matched" && (
           <>
             <Text style={S.bigEmoji}>🎉</Text>
-            <Text style={S.title}>נמצאה התאמה!</Text>
+            <Text style={S.title}>Match found!</Text>
             <Text style={S.sub}>
-              {assignmentId ? "אפשר להמשיך לפרטים." : "מעדכן מזהים מהשרת…"}
+              {assignmentId
+                ? "You can continue to the details."
+                : "Syncing IDs…"}
             </Text>
             <TouchableOpacity
               style={[S.cta, !assignmentId && { opacity: 0.6 }]}
               onPress={openAssignment}
               disabled={ctaDisabled}
             >
-              <Text style={S.ctaText}>פתח/י את ההתאמה</Text>
+              <Text style={S.ctaText}>Open match details</Text>
             </TouchableOpacity>
             <TouchableOpacity style={S.linkBtn} onPress={goHome}>
-              <Text style={S.linkText}>דף הבית</Text>
+              <Text style={S.linkText}>Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -211,10 +216,12 @@ export default function MatchingAwait() {
         {status === "timeout" && (
           <>
             <Text style={S.bigEmoji}>⌚</Text>
-            <Text style={S.title}>אין התאמה כרגע</Text>
-            <Text style={S.sub}>נשלח לך התראה אם תימצא התאמה מאוחר יותר.</Text>
+            <Text style={S.title}>No match right now</Text>
+            <Text style={S.sub}>
+              We’ll notify you if a match becomes available later.
+            </Text>
             <TouchableOpacity style={S.cta} onPress={goHome}>
-              <Text style={S.ctaText}>חזרה לדף הבית</Text>
+              <Text style={S.ctaText}>Back to Home</Text>
             </TouchableOpacity>
           </>
         )}
@@ -240,14 +247,23 @@ const S = StyleSheet.create({
     gap: 10,
   },
   bigEmoji: { fontSize: 48, marginBottom: 4 },
+
   title: {
     fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
     color: "#1f2937",
     marginTop: 4,
+    writingDirection: "ltr",
   },
-  sub: { fontSize: 14, opacity: 0.7, textAlign: "center", color: "#334155" },
+  sub: {
+    fontSize: 14,
+    opacity: 0.7,
+    textAlign: "center",
+    color: "#334155",
+    writingDirection: "ltr",
+  },
+
   cta: {
     backgroundColor: "#9bac70",
     paddingVertical: 12,
@@ -255,7 +271,8 @@ const S = StyleSheet.create({
     borderRadius: 12,
     marginTop: 6,
   },
-  ctaText: { color: "#fff", fontWeight: "800" },
+  ctaText: { color: "#fff", fontWeight: "800", writingDirection: "ltr" },
+
   linkBtn: { padding: 10, marginTop: 8 },
-  linkText: { color: "#475569", fontWeight: "600" },
+  linkText: { color: "#475569", fontWeight: "600", writingDirection: "ltr" },
 });
